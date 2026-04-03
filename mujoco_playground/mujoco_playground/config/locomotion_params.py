@@ -228,11 +228,10 @@ def rsl_rl_config(
       "BerkeleyHumanoidJoystickFlatTerrain",
       "G1Joystick",
       "Go1JoystickFlatTerrain",
+      "G1StandingFlatTerrain",
+      "G1StandingRoughTerrain",
   ):
-    rl_config.max_iterations = 1000
-  if env_name in ("G1StandingFlatTerrain", "G1StandingRoughTerrain"):
-    rl_config.max_iterations = 30_000
-    rl_config.algorithm.entropy_coef = 0.01
+    rl_config.max_iterations = 100000
   if env_name == "Go1JoystickFlatTerrain":
     rl_config.algorithm.learning_rate = 3e-4
     rl_config.algorithm.schedule = "fixed"

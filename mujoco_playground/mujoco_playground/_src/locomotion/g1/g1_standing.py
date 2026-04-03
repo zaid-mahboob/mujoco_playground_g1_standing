@@ -20,6 +20,7 @@ import jax
 import jax.numpy as jp
 from ml_collections import config_dict
 from mujoco import mjx
+from mujoco.mjx._src import math
 import numpy as np
 
 from mujoco_playground._src import mjx_env
@@ -33,7 +34,7 @@ def default_config() -> config_dict.ConfigDict:
       sim_dt=0.002,
       episode_length=3000,
       action_repeat=1,
-      action_scale=0.1,
+      action_scale=0.35,
       restricted_joint_range=False,
       soft_joint_pos_limit_factor=0.95,
       # left_leg(6) + right_leg(6) — [hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll]
@@ -60,10 +61,10 @@ def default_config() -> config_dict.ConfigDict:
               base_height=-1.0,
               lin_vel_z=-0.3,
               ang_vel_xy=-0.5,
-              base_linvel_xy=-0.5,
+              base_linvel_xy=-0.8,
               base_angvel_yaw=-0.1,
-              com_stability=-0.5,
-              pose=-1.0,
+              com_stability=-0.8,
+              pose=-0.3,
               joint_vel=-0.01,
               dof_pos_limits=-1.0,
               action_rate=-0.03,
@@ -74,10 +75,9 @@ def default_config() -> config_dict.ConfigDict:
               contact_force=-0.01,
               foot_contact_symmetry=-0.2,
               foot_flatness=-0.2,
-              foot_slip=-0.05,
               alive=1.0,
               still_bonus=0.5,
-              termination=-200.0,
+              termination=-100.0,
           ),
           base_height_target=0.763,
           max_contact_force=500.0,
@@ -141,6 +141,13 @@ class Standing(g1_base.G1Env):
     self._base_quat = jp.array(self._config.base_quat)
     self._upper_target = jp.array(self._config.upper_body_target)
 
+    # PD gains for leg joints.
+    # - kp from leg position actuators (actuators 0-11).
+    # - kd from leg joint damping (DOFs 6-17 in qvel/qfrc_bias space).
+    # We use both for feedforward-to-position conversion.
+    self._leg_kp = jp.array(self._mj_model.actuator_gainprm[:12, 0])
+    self._leg_kd = jp.array(self._mj_model.dof_damping[6:18])
+
     self._leg_indices = jp.arange(12)
     self._upper_indices = jp.arange(12, 29)
     self._hip_indices = jp.array([1, 2, 7, 8])
@@ -197,9 +204,11 @@ class Standing(g1_base.G1Env):
     dxy = jax.random.uniform(key, (2,), minval=-0.1, maxval=0.1)
     qpos = qpos.at[0:2].set(qpos[0:2] + dxy)
 
-    # Upright pelvis (identity quaternion); no random yaw — single nominal stance.
-    qpos = qpos.at[3:7].set(self._base_quat)
-    leg_pose = self._leg_pose
+    # Upright pelvis, then apply random yaw on top.
+    rng, key = jax.random.split(rng)
+    yaw = jax.random.uniform(key, (1,), minval=-0.3, maxval=0.3)
+    yaw_quat = math.axis_angle_to_quat(jp.array([0, 0, 1]), yaw)
+    qpos = qpos.at[3:7].set(math.quat_mul(self._base_quat, yaw_quat))
 
     rng, key = jax.random.split(rng)
     height_perturb = jax.random.uniform(
@@ -208,14 +217,10 @@ class Standing(g1_base.G1Env):
         minval=self._config.support_height_perturb_range[0],
         maxval=self._config.support_height_perturb_range[1],
     )
-    # Use base_height_target (not keyframe height) so the leg_pose has feet on ground.
-    # knees_bent keyframe is z=0.755 but our leg_pose needs z=0.763.
-    qpos = qpos.at[2].set(
-        self._config.reward_config.base_height_target + height_perturb[0]
-    )
+    qpos = qpos.at[2].set(qpos[2] + height_perturb[0])
 
     target_pose = self._default_pose
-    target_pose = target_pose.at[self._leg_indices].set(leg_pose)
+    target_pose = target_pose.at[self._leg_indices].set(self._leg_pose)
     target_pose = target_pose.at[self._upper_indices].set(self._upper_target)
 
     rng, key = jax.random.split(rng)
@@ -457,7 +462,6 @@ class Standing(g1_base.G1Env):
         "contact_force": self._cost_contact_force(data),
         "foot_contact_symmetry": self._cost_foot_contact_symmetry(data, contact),
         "foot_flatness": self._cost_foot_flatness(data),
-        "foot_slip": self._cost_foot_slip(data, contact),
         "alive": jp.array(1.0),
         "still_bonus": self._reward_still_bonus(data),
         "termination": done,
@@ -682,14 +686,6 @@ class Standing(g1_base.G1Env):
     target = jp.array([0.0, 0.0, 1.0])
     return jp.sum(jp.square(l_up - target)) + jp.sum(jp.square(r_up - target))
 
-  def _cost_foot_slip(self, data: mjx.Data, contact: jax.Array) -> jax.Array:
-    # Penalize tangential foot motion only when the corresponding foot contacts ground.
-    l_vxy = mjx_env.get_sensor_data(self.mj_model, data, "left_foot_global_linvel")[:2]
-    r_vxy = mjx_env.get_sensor_data(self.mj_model, data, "right_foot_global_linvel")[:2]
-    l_cost = contact[0].astype(jp.float32) * jp.sum(jp.square(l_vxy))
-    r_cost = contact[1].astype(jp.float32) * jp.sum(jp.square(r_vxy))
-    return l_cost + r_cost
-
   def _reward_still_bonus(self, data: mjx.Data) -> jax.Array:
     lin_xy = self.get_global_linvel(data, "pelvis")[:2]
     yaw = self.get_global_angvel(data, "torso")[2]
@@ -699,9 +695,8 @@ class Standing(g1_base.G1Env):
     return jp.exp(-1.5 * err)
 
   def _cost_com_stability(self, data: mjx.Data, contact: jax.Array) -> jax.Array:
-    com_xy = data.subtree_com[self._torso_body_id][:2]
-    foot_pos = data.site_xpos[self._feet_site_id]
-    foot_center_xy = jp.mean(foot_pos[:, :2], axis=0)
+    com_xy = data.subtree_com[self._torso_body_id, :2]
+    foot_center_xy = jp.mean(data.site_xpos[self._feet_site_id, :2], axis=0)
     cost = jp.sum(jp.square(com_xy - foot_center_xy))
     both_feet_contact = jp.all(contact).astype(jp.float32)
     return cost * (0.25 + 0.75 * both_feet_contact)
