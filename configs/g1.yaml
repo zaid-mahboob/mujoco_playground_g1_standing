@@ -1,0 +1,18 @@
+# G1 standing deploy — paths relative to repo root.
+onnx_policy_path: model/g1_standing_policy.onnx
+scene_xml_path: resources/g1/scene_29dof.xml
+
+simulation_duration: 60.0
+simulation_dt: 0.002
+control_decimation: 10
+
+# Leg KP (12 values). Defaults to exact training values; override here if needed.
+# kps: [75, 75, 75, 75, 20, 2, 75, 75, 75, 75, 20, 2]
+
+# g1_standing.default_config nominal poses.
+leg_pose: [-0.2, 0.0, 0.0, 0.59, -0.34, 0.0, -0.2, 0.0, 0.0, 0.59, -0.34, 0.0]
+upper_body_target: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
+
+action_scale: 0.35
+base_height: 0.79
+seed: 0
