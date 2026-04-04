@@ -1,0 +1,18 @@
+{
+  "source_checkpoint": "/home/zaidm/Projects/mujoco_playground_g1_standing/model/model_7750.pt",
+  "onnx_path": "/home/zaidm/Projects/mujoco_playground_g1_standing/model/g1_standing_policy.onnx",
+  "obs_dim": 83,
+  "action_dim": 12,
+  "critic_obs_dim": 188,
+  "onnx_input_name": "obs",
+  "onnx_output_name": "action",
+  "obs_groups": {
+    "policy": [
+      "state"
+    ],
+    "critic": [
+      "privileged_state"
+    ]
+  },
+  "training_iteration": 7750
+}
