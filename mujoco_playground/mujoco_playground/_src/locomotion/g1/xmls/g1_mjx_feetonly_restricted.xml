@@ -13,27 +13,32 @@
       <position inheritrange="1" kp="75"/>
 
       <default class="hip">
+        <!-- Leg PD (L/R): hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll. -->
         <default class="hip_pitch">
-          <joint axis="0 1 0" range="-1.57 1.57" actuatorfrcrange="-88 88" armature="0.01017752004"/>
+          <position kp="50"/>
+          <joint axis="0 1 0" range="-1.57 1.57" actuatorfrcrange="-88 88" armature="0.01017752004" damping="15"/>
         </default>
         <default class="hip_roll">
-          <joint axis="1 0 0" range="-0.5 0.5" actuatorfrcrange="-139 139" armature="0.025101925"/>
+          <position kp="20"/>
+          <joint axis="1 0 0" range="-0.5 0.5" actuatorfrcrange="-139 139" armature="0.025101925" damping="10"/>
         </default>
         <default class="hip_yaw">
-          <joint axis="0 0 1" range="-0.7 0.7" actuatorfrcrange="-88 88" armature="0.01017752004"/>
+          <position kp="20"/>
+          <joint axis="0 0 1" range="-0.7 0.7" actuatorfrcrange="-88 88" armature="0.01017752004" damping="10"/>
         </default>
       </default>
       <default class="knee">
-        <joint axis="0 1 0" range="0 1.57" actuatorfrcrange="-139 139" armature="0.025101925"/>
+        <position kp="50"/>
+        <joint axis="0 1 0" range="0 1.57" actuatorfrcrange="-139 139" armature="0.025101925" damping="15"/>
       </default>
       <default class="ankle">
         <default class="ankle_pitch">
-          <position kp="20"/>
-          <joint axis="0 1 0" range="-0.4 0.4" actuatorfrcrange="-50 50" damping="1" armature="0.00721945"/>
+          <position kp="5"/>
+          <joint axis="0 1 0" range="-0.4 0.4" actuatorfrcrange="-50 50" damping="5" armature="0.00721945"/>
         </default>
         <default class="ankle_roll">
-          <position kp="2"/>
-          <joint axis="1 0 0" range="-0.2 0.2" actuatorfrcrange="-50 50" damping=".2" armature="0.00721945"/>
+          <position kp="5"/>
+          <joint axis="1 0 0" range="-0.2 0.2" actuatorfrcrange="-50 50" damping="5" armature="0.00721945"/>
         </default>
       </default>
       <default class="waist_yaw">

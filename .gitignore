@@ -1,6 +1,8 @@
-# Byte-compiled / optimized / DLL files
+# Byte-compiled / optimized / DLL files (do not commit; .gitignore does not affect already-tracked files)
 __pycache__/
+**/__pycache__/
 *.py[cod]
+*.cpython-*.pyc
 *$py.class
 runs/
 
