@@ -67,6 +67,39 @@ NOISE_SCALES = {
     "joint_vel": 0.3,
 }
 
+# Same spirit as ``g1_standing._get_termination`` (torso up-axis + base height).
+_TORSO_BODY_CANDIDATES = ("torso_link", "pelvis")
+
+
+def detect_fall(
+    model: mujoco.MjModel,
+    data: mujoco.MjData,
+    *,
+    height_threshold: float,
+) -> tuple[bool, str]:
+  """Return (fallen, reason). Reasons: nan, torso_up, low_height."""
+  if not np.isfinite(data.qpos).all() or not np.isfinite(data.qvel).all():
+    return True, "nan_or_nonfinite_state"
+
+  torso_id = -1
+  for name in _TORSO_BODY_CANDIDATES:
+    torso_id = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_BODY, name)
+    if torso_id >= 0:
+      break
+  if torso_id < 0:
+    return False, ""
+
+  # Body z-axis in world frame (column 2 of 3x3 xmat); upright → positive Z component.
+  z_world = np.array(data.xmat[torso_id], dtype=np.float64).reshape(3, 3)[:, 2]
+  if float(z_world[2]) < 0.0:
+    return True, "torso_z_world<=0"
+
+  h = float(data.qpos[2])
+  if h < height_threshold:
+    return True, f"low_base_height (z={h:.3f} < {height_threshold})"
+
+  return False, ""
+
 
 def _load_yaml(path: Path) -> dict:
   try:
@@ -176,6 +209,17 @@ def main() -> None:
   p.add_argument("--obs_noise",   type=float, default=0.0)
   p.add_argument("--viewer",      action="store_true")
   p.add_argument("--config",      type=Path,  default=None)
+  p.add_argument(
+      "--fall_height",
+      type=float,
+      default=None,
+      help="Base height (qpos[2]) below this counts as fallen; default 0.45 (training env).",
+  )
+  p.add_argument(
+      "--continue_after_fall",
+      action="store_true",
+      help="Keep simulating after a fall (default: stop and exit after reporting).",
+  )
   args = p.parse_args()
 
   cfg: dict = {}
@@ -246,6 +290,11 @@ def main() -> None:
   dt     = model.opt.timestep
   n_steps = int(args.duration / dt)
   dec    = max(1, int(args.decimation))
+  fall_h = float(cfg.get("fall_height", 0.45))
+  if args.fall_height is not None:
+    fall_h = float(args.fall_height)
+  # Ignore spurious triggers during the first control transients.
+  fall_check_start = max(1, int(round(0.05 / dt)))
 
   # Actuator i directly drives joint i+1 (same order as qpos[7:]).
   # Verified: actuator[0] → left_hip_pitch_joint → slot 0, etc.
@@ -277,6 +326,28 @@ def main() -> None:
 
     apply_torques(model, data, q_des, kp)
 
+  fallen = False
+  fall_reason = ""
+  fall_step: int | None = None  # first fall; sim time then = (fall_step + 1) * dt
+  last_step = -1
+
+  def step_body(step_i: int) -> bool:
+    """Return True to stop the simulation loop."""
+    nonlocal fallen, fall_reason, fall_step
+    if step_i < fall_check_start:
+      return False
+    if fallen and args.continue_after_fall:
+      return False
+    if fallen:
+      return True
+    f, why = detect_fall(model, data, height_threshold=fall_h)
+    if f:
+      fallen = True
+      fall_reason = why
+      fall_step = step_i
+      return not args.continue_after_fall
+    return False
+
   if args.viewer:
     step_i = 0
     with mujoco.viewer.launch_passive(model, data) as viewer:
@@ -284,6 +355,9 @@ def main() -> None:
         if step_i % dec == 0:
           control_tick()
         mujoco.mj_step(model, data)
+        last_step = step_i
+        if step_body(step_i):
+          break
         step_i += 1
         viewer.sync()
   else:
@@ -291,7 +365,18 @@ def main() -> None:
       if step_i % dec == 0:
         control_tick()
       mujoco.mj_step(model, data)
-    print(f"Done: {n_steps} steps (~{args.duration:.1f} s), dt={dt}, decimation={dec}.")
+      last_step = step_i
+      if step_body(step_i):
+        break
+
+  if fall_step is not None:
+    t_stand_until = (fall_step + 1) * dt
+  else:
+    t_stand_until = (last_step + 1) * dt
+  tail = f"fall: {fall_reason}" if fallen else "no fall"
+  if args.continue_after_fall and fallen:
+    tail += "; continued after fall"
+  print(f"Standing until t = {t_stand_until:.4f} s (sim); {tail}.")
 
 
 if __name__ == "__main__":
