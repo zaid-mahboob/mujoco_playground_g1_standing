@@ -315,22 +315,39 @@ def default_config() -> config_dict.ConfigDict:
           duration_range=[2, 8],
           magnitude_range=[0.02, 0.12],
       ),
+      upper_body_pose_disturbance=config_dict.create(
+          enable=True,
+          # Uniform magnitude then ± sign; result is clamped per joint so
+          # upper_body_target[j] + offset stays within mj jnt_range (hard limits).
+          # Example (nominal 0, g1_mjx_feetonly.xml): waist_yaw ∈ [-2.618, 2.618] rad
+          # ⇒ offset ∈ [-2.618, 2.618]; waist_roll / waist_pitch ∈ [-0.52, 0.52] rad
+          # ⇒ offset ∈ [-0.52, 0.52] each (tighter than magnitude_range caps those joints).
+          magnitude_range=[0.03, 0.35],
+      ),
       curriculum_config=config_dict.create(
           enable=True,
+          # Curriculum progress reaches 1.0 by this many env steps.
           ramp_steps=10_000_000,
+          # Keep all disturbances off before this global step.
           disturbance_warmup_steps=1_000_000,
           use_performance_gate=True,
           ema_alpha=0.02,
           target_episode_fraction=0.8,
           target_fall_rate=0.2,
+          # Push curriculum.
           push_mag_scale_start=0.25,
           push_mag_scale_end=1.0,
           push_interval_scale_start=2.0,  # larger => less frequent early
           push_interval_scale_end=1.0,
+          # Leg-joint disturbance curriculum.
           joint_mag_scale_start=0.25,
           joint_mag_scale_end=1.0,
           joint_interval_scale_start=2.0,
           joint_interval_scale_end=1.0,
+          # Upper-body pose disturbance curriculum (per-episode offset magnitude).
+          # Multiplies upper_body_pose_disturbance.magnitude_range when sampling each episode.
+          upper_mag_scale_start=0.20,
+          upper_mag_scale_end=1.0,
       ),
       com_pid_config=config_dict.create(
           enable=True,
@@ -534,6 +551,9 @@ class Standing(g1_base.G1Env):
     r = self._uppers - self._lowers
     self._soft_lowers = c - 0.5 * r * self._config.soft_joint_pos_limit_factor
     self._soft_uppers = c + 0.5 * r * self._config.soft_joint_pos_limit_factor
+    # Feasible additive offset for upper-body disturbance: nominal + offset ∈ [lower, upper].
+    self._upper_offset_min = self._lowers[self._upper_indices] - self._upper_target
+    self._upper_offset_max = self._uppers[self._upper_indices] - self._upper_target
 
     self._pelvis_imu_site_id = self._mj_model.site("imu_in_pelvis").id
     self._torso_body_id = self._mj_model.body(consts.ROOT_BODY).id
@@ -678,6 +698,9 @@ class Standing(g1_base.G1Env):
         "disturb_time_left": jp.array(0, dtype=jp.int32),
         "disturb_joint": jp.array(0, dtype=jp.int32),
         "disturb_value": jp.array(0.0),
+        # One joint + offset for whole episode; resampled when done (see step).
+        "upper_episode_joint": jp.array(0, dtype=jp.int32),
+        "upper_episode_offset": jp.array(0.0),
         "push_profile_id": jp.array(0, dtype=jp.int32),
         "prev_foot_xy": data.site_xpos[self._feet_site_id, :2],
     }
@@ -804,6 +827,7 @@ class Standing(g1_base.G1Env):
     motor_targets = self._apply_joint_disturbance(
         motor_targets, disturb_rng, state.info
     )
+    motor_targets = self._apply_upper_body_episode_offset(motor_targets, state.info)
     motor_targets = jp.clip(motor_targets, self._lowers, self._uppers)
 
     data = mjx_env.step(self.mjx_model, data, motor_targets, self.n_substeps)
@@ -817,12 +841,25 @@ class Standing(g1_base.G1Env):
     }
     reward = sum(rewards.values()) * self.dt
 
-    state.info["rng"] = rng
     state.info["step"] += 1
     state.info["global_step"] += 1
     state.info["episode_step"] += 1
     state.info["push_step"] += 1
     state.info["disturb_step"] += 1
+    rng, resample_rng = jax.random.split(rng)
+    new_uj, new_uo = self._sample_upper_body_episode_offset(resample_rng, state.info)
+    disturb_on = self._disturbances_enabled(state.info)
+    state.info["upper_episode_joint"] = jp.where(
+        done,
+        jp.where(disturb_on, new_uj, jp.array(0, dtype=jp.int32)),
+        state.info["upper_episode_joint"],
+    )
+    state.info["upper_episode_offset"] = jp.where(
+        done,
+        jp.where(disturb_on, new_uo, jp.array(0.0)),
+        state.info["upper_episode_offset"],
+    )
+    state.info["rng"] = rng
     state.info["last_last_act"] = state.info["last_act"]
     state.info["last_act"] = delayed_action
     state.info["action_history"] = action_history
@@ -857,7 +894,6 @@ class Standing(g1_base.G1Env):
     state.info["episode_step"] = jp.where(done, 0, state.info["episode_step"])
     state.info["push_step"] = jp.where(done, 0, state.info["push_step"])
     state.info["disturb_step"] = jp.where(done, 0, state.info["disturb_step"])
-
     for k, v in rewards.items():
       state.metrics[f"reward/{k}"] = v
     state.metrics["disturbance_profile_id"] = state.info["push_profile_id"].astype(
@@ -1143,6 +1179,45 @@ class Standing(g1_base.G1Env):
     index = info["disturb_joint"]
     disturbed = targets.at[index].add(jp.where(active, info["disturb_value"], 0.0))
     return disturbed
+
+  def _sample_upper_body_episode_offset(
+      self, rng: jax.Array, info: dict[str, Any]
+  ) -> tuple[jax.Array, jax.Array]:
+    """Sample one upper joint index and signed offset (rad) for the next episode."""
+    progress = self._curriculum_progress(info)
+    disturb_mag_scale = self._lerp(
+        self._config.curriculum_config.upper_mag_scale_start,
+        self._config.curriculum_config.upper_mag_scale_end,
+        progress,
+    )
+    rng, joint_rng, mag_rng, sign_rng = jax.random.split(rng, 4)
+    new_joint = jax.random.randint(
+        joint_rng, (), 0, int(self._upper_indices.shape[0])
+    )
+    cfg = self._config.upper_body_pose_disturbance
+    new_mag = jax.random.uniform(
+        mag_rng,
+        (),
+        minval=cfg.magnitude_range[0] * disturb_mag_scale,
+        maxval=cfg.magnitude_range[1] * disturb_mag_scale,
+    )
+    new_sign = jp.where(jax.random.bernoulli(sign_rng, 0.5), 1.0, -1.0)
+    raw = new_sign * new_mag
+    lo = self._upper_offset_min[new_joint]
+    hi = self._upper_offset_max[new_joint]
+    clamped = jp.clip(raw, lo, hi)
+    return new_joint, clamped
+
+  def _apply_upper_body_episode_offset(
+      self, targets: jax.Array, info: dict[str, Any]
+  ) -> jax.Array:
+    if not self._config.upper_body_pose_disturbance.enable:
+      return targets
+    disturb_on = self._disturbances_enabled(info)
+    upper_index = self._upper_indices[info["upper_episode_joint"]]
+    return targets.at[upper_index].add(
+        jp.where(disturb_on, info["upper_episode_offset"], 0.0)
+    )
 
   def _cost_orientation(self, torso_zaxis: jax.Array) -> jax.Array:
     return jp.sum(jp.square(torso_zaxis - jp.array([0.0, 0.0, 1.0])))
