@@ -263,7 +263,7 @@ def default_config() -> config_dict.ConfigDict:
               base_linvel_xy=-0.8,
               base_angvel_yaw=-0.1,
               com_stability=-0.8,
-              pose=-0.3,
+              pose=-0.0,
               joint_vel=-0.01,
               dof_pos_limits=-1.0,
               action_rate=-0.03,
@@ -322,6 +322,11 @@ def default_config() -> config_dict.ConfigDict:
           max_integral=0.1,
       ),
       support_height_perturb_range=[-0.01, 0.02],
+      action_latency_config=config_dict.create(
+          enable=True,
+          min_steps=1,
+          max_steps=3,
+      ),
       # CoM FK only uses IMU quat + joints; base translation is arbitrary (deploy: [0,0,2]).
       com_fk_base_pos=[0.0, 0.0, 2.0],
       impl="warp",
@@ -538,6 +543,17 @@ class Standing(g1_base.G1Env):
     disturb_interval_steps = self._sample_interval_steps(
         jd_rng, self._config.joint_disturbance.interval_range
     )
+    rng, latency_rng = jax.random.split(rng)
+    latency_steps = jp.where(
+        self._config.action_latency_config.enable,
+        jax.random.randint(
+            latency_rng,
+            (),
+            self._config.action_latency_config.min_steps,
+            self._config.action_latency_config.max_steps + 1,
+        ),
+        jp.array(0, dtype=jp.int32),
+    )
 
     info = {
         "rng": rng,
@@ -554,6 +570,8 @@ class Standing(g1_base.G1Env):
         "com_vel_filtered": jp.zeros(3),
         "last_act": jp.zeros(self.action_size),
         "last_last_act": jp.zeros(self.action_size),
+        "action_history": jp.zeros((4, self.action_size)),
+        "action_latency_steps": latency_steps.astype(jp.int32),
         "motor_targets": target_pose,
         "push_step": jp.array(0, dtype=jp.int32),
         "push_interval_steps": push_interval_steps,
@@ -614,9 +632,15 @@ class Standing(g1_base.G1Env):
     qvel = data.qvel.at[:2].set(data.qvel[:2] + push)
     data = data.replace(qvel=qvel)
 
+    action_history = jp.concatenate(
+        [action[jp.newaxis, :], state.info["action_history"][:-1]], axis=0
+    )
+    latency_steps = state.info["action_latency_steps"]
+    delayed_action = action_history[latency_steps]
+
     leg_targets = (
         state.info["target_pose"][self._leg_indices]
-        + action * self._config.action_scale
+        + delayed_action * self._config.action_scale
     )
     motor_targets = state.info["target_pose"].at[self._leg_indices].set(leg_targets)
     motor_targets = motor_targets.at[self._upper_indices].set(self._upper_target)
@@ -688,7 +712,7 @@ class Standing(g1_base.G1Env):
     done = self._get_termination(data)
 
     obs = self._get_obs(data, state.info, contact)
-    rewards = self._get_reward(data, action, state.info, done, contact)
+    rewards = self._get_reward(data, delayed_action, state.info, done, contact)
     rewards = {
         k: v * self._config.reward_config.scales[k] for k, v in rewards.items()
     }
@@ -701,7 +725,8 @@ class Standing(g1_base.G1Env):
     state.info["push_step"] += 1
     state.info["disturb_step"] += 1
     state.info["last_last_act"] = state.info["last_act"]
-    state.info["last_act"] = action
+    state.info["last_act"] = delayed_action
+    state.info["action_history"] = action_history
     state.info["motor_targets"] = motor_targets
 
     if self._config.com_pid_config.enable:
