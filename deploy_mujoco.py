@@ -169,7 +169,7 @@ def main() -> None:
   p = argparse.ArgumentParser(description=__doc__)
   p.add_argument("--onnx", type=Path, default=REPO_ROOT / "model" / "g1_standing_policy.onnx")
   p.add_argument("--onnx_meta", type=Path, default=None)
-  p.add_argument("--scene", type=Path, default=REPO_ROOT / "resources" / "g1" / "scene_29dof.xml")
+  p.add_argument("--scene", type=Path, default=REPO_ROOT / "resources" / "g1" / "scene_29dof_without_hands.xml")
   p.add_argument("--duration",    type=float, default=60.0)
   p.add_argument("--sim_dt",      type=float, default=None)
   p.add_argument("--decimation",  type=int,   default=10)
