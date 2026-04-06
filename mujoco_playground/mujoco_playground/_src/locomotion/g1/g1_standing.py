@@ -226,6 +226,28 @@ def _compute_qp_compensation_torques(
   return tau_joints[:12].astype(np.float32)
 
 
+LEG_POSE_LIBRARY = np.array(
+    [
+        [-0.20, 0.00, 0.00, 0.59, -0.34, 0.00, -0.20, 0.00, 0.00, 0.59, -0.34, 0.00],
+        [-0.20, 0.10, 0.08, 0.59, -0.34, 0.05, -0.20, -0.10, -0.08, 0.59, -0.34, -0.05],
+        [-0.22, 0.20, 0.10, 0.65, -0.38, 0.08, -0.22, -0.20, -0.10, 0.65, -0.38, -0.08],
+        [-0.25, 0.32, 0.14, 0.80, -0.48, 0.13, -0.25, -0.32, -0.14, 0.80, -0.48, -0.13],
+        [-0.28, 0.42, 0.18, 0.95, -0.57, 0.17, -0.28, -0.42, -0.18, 0.95, -0.57, -0.17],
+        [-0.10, 0.00, 0.00, 0.25, -0.14, 0.00, -0.10, 0.00, 0.00, 0.25, -0.14, 0.00],
+        [-0.10, 0.12, 0.06, 0.25, -0.14, 0.05, -0.10, -0.12, -0.06, 0.25, -0.14, -0.05],
+        [-0.20, 0.00, 0.00, 1.00, -0.60, 0.00, -0.20, 0.00, 0.00, 1.00, -0.60, 0.00],
+        [-0.25, 0.30, 0.12, 1.00, -0.60, 0.12, -0.25, -0.30, -0.12, 1.00, -0.60, -0.12],
+        [-0.20, 0.15, 0.20, 0.59, -0.34, 0.06, -0.20, -0.15, -0.20, 0.59, -0.34, -0.06],
+        [-0.22, 0.25, 0.10, 0.78, -0.46, 0.10, -0.18, -0.08, -0.04, 0.45, -0.26, -0.03],
+        [-0.25, 0.08, 0.06, 0.85, -0.50, 0.03, -0.12, -0.15, -0.08, 0.30, -0.17, -0.06],
+        [-0.12, 0.35, 0.10, 0.30, -0.17, 0.14, -0.12, -0.35, -0.10, 0.30, -0.17, -0.14],
+        [-0.18, 0.12, 0.10, 0.55, -0.32, 0.05, -0.18, -0.12, -0.10, 0.55, -0.32, -0.05],
+        [-0.22, 0.28, 0.12, 0.72, -0.43, 0.11, -0.22, -0.28, -0.12, 0.72, -0.43, -0.11],
+    ],
+    dtype=np.float64,
+)
+
+
 def default_config() -> config_dict.ConfigDict:
   return config_dict.create(
       ctrl_dt=0.02,
@@ -261,7 +283,7 @@ def default_config() -> config_dict.ConfigDict:
               lin_vel_z=-0.3,
               ang_vel_xy=-0.5,
               base_linvel_xy=-0.8,
-              base_angvel_yaw=-0.1,
+              base_angvel_yaw=-0.3,
               com_stability=-0.8,
               pose=-0.0,
               joint_vel=-0.01,
@@ -270,10 +292,11 @@ def default_config() -> config_dict.ConfigDict:
               torques=0.0,
               energy=0.0,
               dof_acc=0.0,
-              collision=-0.5,
-              contact_force=-0.01,
+              collision=-0.0,
+              contact_force=-0.05,
               foot_contact_symmetry=-0.2,
               foot_flatness=-0.2,
+              foot_slip=-0.05,
               alive=1.0,
               still_bonus=0.5,
               termination=-100.0,
@@ -327,6 +350,9 @@ def default_config() -> config_dict.ConfigDict:
           min_steps=1,
           max_steps=3,
       ),
+      standing_pose_randomization=config_dict.create(
+          enable=True,
+      ),
       # CoM FK only uses IMU quat + joints; base translation is arbitrary (deploy: [0,0,2]).
       com_fk_base_pos=[0.0, 0.0, 2.0],
       impl="warp",
@@ -364,14 +390,13 @@ class Standing(g1_base.G1Env):
     self._leg_kd = jp.array(self._mj_model.dof_damping[6:18])
 
     height = float(self._config.reward_config.base_height_target)
-    leg_pose_np = np.array(self._config.leg_pose, dtype=np.float64)
+    default_leg_pose_np = np.array(self._config.leg_pose, dtype=np.float64)
     gamma = float(self._config.qp_gamma)
-    self._comp_tau = jp.array(
-        _compute_qp_compensation_torques(self._mj_model, leg_pose_np, height, gamma)
-    )
-    self._G_standing = jp.array(
-        _compute_gravity_torques(self._mj_model, leg_pose_np, height)
-    )
+
+    if self._config.standing_pose_randomization.enable:
+      self._leg_pose_library = jp.array(LEG_POSE_LIBRARY)
+    else:
+      self._leg_pose_library = jp.array(default_leg_pose_np[jp.newaxis, :])
 
     import mujoco as _mj
 
@@ -379,7 +404,67 @@ class Standing(g1_base.G1Env):
     lf_id = self._mj_model.body("left_ankle_roll_link").id
     rf_id = self._mj_model.body("right_ankle_roll_link").id
     upper_np = np.array(self._config.upper_body_target, dtype=np.float64)
-    joint_nom = np.concatenate([leg_pose_np, upper_np])
+    self._comp_tau_library = []
+    self._G_standing_library = []
+    self._target_com_left_library = []
+    self._target_com_right_library = []
+
+    for pose_np in np.array(self._leg_pose_library, dtype=np.float64):
+      self._comp_tau_library.append(
+          _compute_qp_compensation_torques(self._mj_model, pose_np, height, gamma)
+      )
+      self._G_standing_library.append(
+          _compute_gravity_torques(self._mj_model, pose_np, height)
+      )
+
+      joint_nom = np.concatenate([pose_np, upper_np])
+      tmp = _mj.MjData(self._mj_model)
+      qpos_nom = np.zeros(self._mj_model.nq)
+      qpos_nom[2] = height
+      qpos_nom[3] = 1.0
+      qpos_nom[7 : 7 + joint_nom.shape[0]] = joint_nom
+      tmp.qpos[:] = qpos_nom
+      _mj.mj_forward(self._mj_model, tmp)
+      fw_l = tmp.xpos[lf_id].copy()
+      fw_r = tmp.xpos[rf_id].copy()
+
+      _bq = np.array([1.0, 0.0, 0.0, 0.0])
+      self._target_com_left_library.append(
+          _get_com_position_np(
+              self._mj_model,
+              joint_nom,
+              "left",
+              pelvis_id,
+              lf_id,
+              rf_id,
+              fw_l,
+              fw_r,
+              base_quat=_bq,
+              fk_base_pos=np.array(self._config.com_fk_base_pos, dtype=np.float64),
+          )
+      )
+      self._target_com_right_library.append(
+          _get_com_position_np(
+              self._mj_model,
+              joint_nom,
+              "right",
+              pelvis_id,
+              lf_id,
+              rf_id,
+              fw_l,
+              fw_r,
+              base_quat=_bq,
+              fk_base_pos=np.array(self._config.com_fk_base_pos, dtype=np.float64),
+          )
+      )
+
+    self._comp_tau_library = jp.array(np.array(self._comp_tau_library))
+    self._G_standing_library = jp.array(np.array(self._G_standing_library))
+    self._target_com_left_library = jp.array(np.array(self._target_com_left_library))
+    self._target_com_right_library = jp.array(np.array(self._target_com_right_library))
+    self._comp_tau = self._comp_tau_library[0]
+    self._G_standing = self._G_standing_library[0]
+    joint_nom = np.concatenate([default_leg_pose_np, upper_np])
     tmp = _mj.MjData(self._mj_model)
     qpos_nom = np.zeros(self._mj_model.nq)
     qpos_nom[2] = height
@@ -510,8 +595,18 @@ class Standing(g1_base.G1Env):
     )
     qpos = qpos.at[2].set(qpos[2] + height_perturb[0])
 
+    rng, key = jax.random.split(rng)
+    pose_idx = jax.random.randint(
+        key, (), minval=0, maxval=self._leg_pose_library.shape[0]
+    )
+    sampled_leg_pose = self._leg_pose_library[pose_idx]
+    sampled_comp_tau = self._comp_tau_library[pose_idx]
+    sampled_g_standing = self._G_standing_library[pose_idx]
+    sampled_target_com_left = self._target_com_left_library[pose_idx]
+    sampled_target_com_right = self._target_com_right_library[pose_idx]
+
     target_pose = self._default_pose
-    target_pose = target_pose.at[self._leg_indices].set(self._leg_pose)
+    target_pose = target_pose.at[self._leg_indices].set(sampled_leg_pose)
     target_pose = target_pose.at[self._upper_indices].set(self._upper_target)
 
     rng, key = jax.random.split(rng)
@@ -562,11 +657,14 @@ class Standing(g1_base.G1Env):
         "episode_step": jp.array(0, dtype=jp.int32),
         "episode_len_ema": jp.array(0.0),
         "fall_rate_ema": jp.array(1.0),
+        "pose_idx": pose_idx.astype(jp.int32),
         "target_pose": target_pose,
-        "comp_tau": self._comp_tau,
-        "G_standing": self._G_standing,
+        "comp_tau": sampled_comp_tau,
+        "G_standing": sampled_g_standing,
+        "target_com_left": sampled_target_com_left,
+        "target_com_right": sampled_target_com_right,
         "com_integral": jp.zeros(3),
-        "prev_com": (self._target_com_left + self._target_com_right) / 2.0,
+        "prev_com": (sampled_target_com_left + sampled_target_com_right) / 2.0,
         "com_vel_filtered": jp.zeros(3),
         "last_act": jp.zeros(self.action_size),
         "last_last_act": jp.zeros(self.action_size),
@@ -581,6 +679,7 @@ class Standing(g1_base.G1Env):
         "disturb_joint": jp.array(0, dtype=jp.int32),
         "disturb_value": jp.array(0.0),
         "push_profile_id": jp.array(0, dtype=jp.int32),
+        "prev_foot_xy": data.site_xpos[self._feet_site_id, :2],
     }
 
     metrics = {
@@ -660,7 +759,7 @@ class Standing(g1_base.G1Env):
     if self._config.com_pid_config.enable:
       use_left_stance, current_com = self._com_stance_from_mjx_fwd(fwd_com_fk)
       target_com = jp.where(
-          use_left_stance, self._target_com_left, self._target_com_right
+          use_left_stance, state.info["target_com_left"], state.info["target_com_right"]
       )
       com_vel_raw = (current_com - state.info["prev_com"]) / self.dt
       com_vel_filtered = (
@@ -728,6 +827,7 @@ class Standing(g1_base.G1Env):
     state.info["last_act"] = delayed_action
     state.info["action_history"] = action_history
     state.info["motor_targets"] = motor_targets
+    state.info["prev_foot_xy"] = data.site_xpos[self._feet_site_id, :2]
 
     if self._config.com_pid_config.enable:
       state.info["com_integral"] = new_com_integral
@@ -870,6 +970,7 @@ class Standing(g1_base.G1Env):
         "contact_force": self._cost_contact_force(data),
         "foot_contact_symmetry": self._cost_foot_contact_symmetry(data, contact),
         "foot_flatness": self._cost_foot_flatness(data),
+        "foot_slip": self._cost_foot_slip(data, contact, info["prev_foot_xy"]),
         "alive": jp.array(1.0),
         "still_bonus": self._reward_still_bonus(data),
         "termination": done,
@@ -1093,6 +1194,17 @@ class Standing(g1_base.G1Env):
     ]
     target = jp.array([0.0, 0.0, 1.0])
     return jp.sum(jp.square(l_up - target)) + jp.sum(jp.square(r_up - target))
+
+  def _cost_foot_slip(
+      self, data: mjx.Data, contact: jax.Array, prev_foot_xy: jax.Array
+  ) -> jax.Array:
+    # Tangential (ground-plane) slip velocity of feet, penalized only in contact.
+    curr_foot_xy = data.site_xpos[self._feet_site_id, :2]
+    foot_vel_xy = (curr_foot_xy - prev_foot_xy) / self.dt
+    foot_speed_sq = jp.sum(jp.square(foot_vel_xy), axis=1)
+    contact_f = contact.astype(foot_speed_sq.dtype)
+    contact_count = jp.maximum(jp.sum(contact_f), 1.0)
+    return jp.sum(foot_speed_sq * contact_f) / contact_count
 
   def _reward_still_bonus(self, data: mjx.Data) -> jax.Array:
     lin_xy = self.get_global_linvel(data, "pelvis")[:2]
