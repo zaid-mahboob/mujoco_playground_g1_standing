@@ -125,61 +125,29 @@ def build_obs(
     noise_level: float,
     rng: np.random.Generator,
 ) -> np.ndarray:
-  """Build 83-D policy observation matching g1_standing._get_obs['state']."""
-  # Gyroscope — angular velocity in pelvis local frame.
+
   adr, dim = _sensor_slice(model, "imu-pelvis-angular-velocity")
   gyro = np.array(data.sensordata[adr : adr + dim], dtype=np.float64)
-
-  # Gravity direction in pelvis IMU frame: R_world→local @ [0,0,-1].
   sid = mujoco.mj_name2id(model, mujoco.mjtObj.mjOBJ_SITE, "imu_in_pelvis")
   R = data.site_xmat[sid].reshape(3, 3)
   gravity = R.T @ np.array([0.0, 0.0, -1.0], dtype=np.float64)
-
-  def _noise(scale: float, shape: tuple[int, ...]) -> np.ndarray:
-    if noise_level <= 0:
-      return np.zeros(shape, dtype=np.float64)
-    return (noise_level * scale * rng.uniform(-1.0, 1.0, size=shape)).astype(np.float64)
-
-  gyro_n  = gyro    + _noise(NOISE_SCALES["gyro"],      (3,))
-  grav_n  = gravity + _noise(NOISE_SCALES["gravity"],   (3,))
-  qj      = np.array(data.qpos[7:36], dtype=np.float64)   # 29 joint angles
-  qj_n    = qj + _noise(NOISE_SCALES["joint_pos"], (29,))
-  qd_n    = np.array(data.qvel[6:35], dtype=np.float64) + _noise(NOISE_SCALES["joint_vel"], (29,))
-
-  # joint_state: leg angles relative to target_pose, upper body absolute.
-  leg_residual = qj_n[:12] - target_pose[:12]
-  upper_abs    = qj_n[12:]
+  qj = np.array(data.qpos[7:36], dtype=np.float64)
+  qd = np.array(data.qvel[6:35], dtype=np.float64)
+  leg_residual = qj[:12] - target_pose[:12]
+  upper_abs = qj[12:]
 
   obs = np.concatenate([
-      gyro_n,                       # 3
-      grav_n,                       # 3
+      gyro,                         # 3 (raw)
+      gravity,                      # 3 (raw)
       np.zeros(3, dtype=np.float64),  # cmd (velocity commands = 0 at deploy)
       leg_residual,                 # 12
       upper_abs,                    # 17
-      qd_n,                         # 29
+      qd,                           # 29 (raw)
       last_act.astype(np.float64),  # 12
       np.zeros(4, dtype=np.float64),  # gait phase = 0 (not used for standing)
   ])
   assert obs.shape == (83,), f"obs shape {obs.shape} != (83,)"
   return obs.astype(np.float32)
-
-
-def apply_torques(
-    model: mujoco.MjModel,
-    data: mujoco.MjData,
-    q_des: np.ndarray,
-    kp: np.ndarray,
-) -> None:
-  """Apply position-servo torques: tau = kp*(q_des - q).
-
-  kd is zero here because dof_damping in the model already provides velocity
-  damping identical to the training environment.
-  """
-  for i in range(model.nu):
-    jid  = int(model.actuator_trnid[i, 0])
-    qadr = int(model.jnt_qposadr[jid])
-    q    = float(data.qpos[qadr])
-    data.ctrl[i] = kp[i] * (q_des[i] - q)
 
 
 def reset_state(
@@ -258,10 +226,7 @@ def main() -> None:
     print(f"Expected nu=29 nq=36; got nu={model.nu} nq={model.nq}", file=sys.stderr)
     sys.exit(1)
 
-  # ── Override dof_damping to exactly match training physics ─────────────────
-  # Training: position actuators + per-joint dof_damping → total = kp*(q*-q) - damp*dq
-  # Deploy:   motor actuators   + model dof_damping      → ctrl + model.damp*dq
-  # Fix: set model.dof_damping = training values, then ctrl = kp*(q*-q), kd=0.
+  # Match training physics: per-joint damping in model + Kp position servo in control.
   model.dof_damping[6:35] = TRAIN_DOF_DAMPING
   data = mujoco.MjData(model)
 
@@ -284,7 +249,6 @@ def main() -> None:
   action_scale = float(cfg.get("action_scale", args.action_scale))
 
   reset_state(model, data, target_pose, base_height)
-  last_act = np.zeros(12, dtype=np.float32)
   rng = np.random.default_rng(int(cfg.get("seed", 0)))
 
   dt     = model.opt.timestep
@@ -298,7 +262,7 @@ def main() -> None:
 
   # Actuator i directly drives joint i+1 (same order as qpos[7:]).
   # Verified: actuator[0] → left_hip_pitch_joint → slot 0, etc.
-  train_ctrlrange = np.array([
+  train_qpos_range = np.array([
       [-2.5307, 2.8798], [-0.5236, 2.9671], [-2.7576, 2.7576],   # L hip p/r/y
       [-0.0873, 2.8798], [-0.8727, 0.5236], [-0.2618, 0.2618],   # L knee, ankle p/r
       [-2.5307, 2.8798], [-0.5236, 2.9671], [-2.7576, 2.7576],   # R hip p/r/y
@@ -309,22 +273,6 @@ def main() -> None:
       [-3.0892, 2.6704], [-2.2515, 1.5882], [-2.6180, 2.6180], [-1.0472, 2.0944],  # R arm
       [-1.9722, 1.9722], [-1.6144, 1.6144], [-1.6144, 1.6144],   # R wrist
   ], dtype=np.float64)
-
-  def control_tick() -> None:
-    nonlocal last_act
-    obs = build_obs(model, data, target_pose, last_act, args.obs_noise, rng)
-    act = session.run([out_name], {in_name: obs.reshape(1, -1)})[0].reshape(-1)
-    act = np.clip(act.astype(np.float32), -1.0, 1.0)
-    last_act = act
-
-    # Target joint positions: legs = nominal + policy residual, upper = nominal.
-    q_des = target_pose.copy()
-    q_des[:12] += action_scale * act.astype(np.float64)
-
-    # Clip to training joint range limits.
-    q_des = np.clip(q_des, train_ctrlrange[:, 0], train_ctrlrange[:, 1])
-
-    apply_torques(model, data, q_des, kp)
 
   fallen = False
   fall_reason = ""
@@ -347,13 +295,32 @@ def main() -> None:
       fall_step = step_i
       return not args.continue_after_fall
     return False
-
+  # Desired qpos command updated at policy rate (decimated control ticks).
+  q_des = target_pose.copy()
+  last_act = np.zeros(12, dtype=np.float32)
   if args.viewer:
     step_i = 0
     with mujoco.viewer.launch_passive(model, data) as viewer:
       while viewer.is_running() and step_i < n_steps:
         if step_i % dec == 0:
-          control_tick()
+          obs = build_obs(model, data, target_pose, last_act, args.obs_noise, rng)
+          act = session.run([out_name], {in_name: obs.reshape(1, -1)})[0].reshape(-1)
+          act = np.clip(act.astype(np.float32), -1.0, 1.0)
+          last_act = act
+
+          # Target joint positions: legs = nominal + policy residual, upper = nominal.
+          q_des = target_pose.copy()
+          q_des[:12] += action_scale * act.astype(np.float64)
+
+          # Clip to training joint range limits.
+          q_des = np.clip(q_des, train_qpos_range[:, 0], train_qpos_range[:, 1])
+
+        for i in range(model.nu):
+          jid  = int(model.actuator_trnid[i, 0])
+          qadr = int(model.jnt_qposadr[jid])
+          q    = float(data.qpos[qadr])
+          data.ctrl[i] = kp[i] * (q_des[i] - q)
+
         mujoco.mj_step(model, data)
         last_step = step_i
         if step_body(step_i):
@@ -363,7 +330,23 @@ def main() -> None:
   else:
     for step_i in range(n_steps):
       if step_i % dec == 0:
-        control_tick()
+        obs = build_obs(model, data, target_pose, last_act, args.obs_noise, rng)
+        act = session.run([out_name], {in_name: obs.reshape(1, -1)})[0].reshape(-1)
+        act = np.clip(act.astype(np.float32), -1.0, 1.0)
+        last_act = act
+
+        # Target joint positions: legs = nominal + policy residual, upper = nominal.
+        q_des = target_pose.copy()
+        q_des[:12] += action_scale * act.astype(np.float64)
+
+        # Clip to training joint range limits.
+        q_des = np.clip(q_des, train_qpos_range[:, 0], train_qpos_range[:, 1])
+
+      for i in range(model.nu):
+        jid  = int(model.actuator_trnid[i, 0])
+        qadr = int(model.jnt_qposadr[jid])
+        q    = float(data.qpos[qadr])
+        data.ctrl[i] = kp[i] * (q_des[i] - q)
       mujoco.mj_step(model, data)
       last_step = step_i
       if step_body(step_i):

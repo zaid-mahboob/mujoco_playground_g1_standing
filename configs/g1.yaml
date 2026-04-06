@@ -1,5 +1,5 @@
 # G1 standing deploy — paths relative to repo root.
-onnx_policy_path: model/g1_standing_policy.onnx
+onnx_policy_path: model/g1_standing_policy_v2.onnx
 scene_xml_path: resources/g1/scene_29dof.xml
 
 simulation_duration: 60.0
