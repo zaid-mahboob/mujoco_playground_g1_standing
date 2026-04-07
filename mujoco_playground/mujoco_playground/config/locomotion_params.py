@@ -228,12 +228,18 @@ def rsl_rl_config(
       "BerkeleyHumanoidJoystickFlatTerrain",
       "G1Joystick",
       "Go1JoystickFlatTerrain",
-      "G1StandingFlatTerrain",
-      "G1StandingRoughTerrain",
   ):
     rl_config.max_iterations = 100000
   if env_name == "Go1JoystickFlatTerrain":
     rl_config.algorithm.learning_rate = 3e-4
     rl_config.algorithm.schedule = "fixed"
+
+  if env_name in ("G1StandingFlatTerrain", "G1StandingRoughTerrain"):
+    rl_config.max_iterations = 100000
+    # Higher entropy prevents premature policy collapse on this complex bipedal task.
+    rl_config.algorithm.entropy_coef = 0.005
+    # Longer effective horizon (≈200 steps vs 100 at γ=0.99) so the policy plans
+    # for height maintenance across the full 60-second episode, not just 2 s ahead.
+    rl_config.algorithm.gamma = 0.995
 
   return rl_config
