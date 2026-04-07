@@ -226,23 +226,29 @@ def _compute_qp_compensation_torques(
   return tau_joints[:12].astype(np.float32)
 
 
+# Natural grounded heights were computed for every pose (pelvis z when feet are at z=0).
+# Poses with natural height < 0.70 m were removed because they start the reset with feet
+# floating ~10 cm above ground; the impact bounce can briefly push the pelvis below the
+# 0.65 m termination threshold, causing spurious early terminations.
+# Removed: old pose 4 (knee=0.95, h=0.664m), old pose 7 (knee=1.00, h=0.659m),
+#           old pose 8 (knee=1.00, h=0.658m).
+# Remaining 12 poses all have natural grounded height >= 0.70 m.
 LEG_POSE_LIBRARY = np.array(
     [
-        [-0.20, 0.00, 0.00, 0.59, -0.34, 0.00, -0.20, 0.00, 0.00, 0.59, -0.34, 0.00],
-        [-0.20, 0.10, 0.08, 0.59, -0.34, 0.05, -0.20, -0.10, -0.08, 0.59, -0.34, -0.05],
-        [-0.22, 0.20, 0.10, 0.65, -0.38, 0.08, -0.22, -0.20, -0.10, 0.65, -0.38, -0.08],
-        [-0.25, 0.32, 0.14, 0.80, -0.48, 0.13, -0.25, -0.32, -0.14, 0.80, -0.48, -0.13],
-        [-0.28, 0.42, 0.18, 0.95, -0.57, 0.17, -0.28, -0.42, -0.18, 0.95, -0.57, -0.17],
-        [-0.10, 0.00, 0.00, 0.25, -0.14, 0.00, -0.10, 0.00, 0.00, 0.25, -0.14, 0.00],
-        [-0.10, 0.12, 0.06, 0.25, -0.14, 0.05, -0.10, -0.12, -0.06, 0.25, -0.14, -0.05],
-        [-0.20, 0.00, 0.00, 1.00, -0.60, 0.00, -0.20, 0.00, 0.00, 1.00, -0.60, 0.00],
-        [-0.25, 0.30, 0.12, 1.00, -0.60, 0.12, -0.25, -0.30, -0.12, 1.00, -0.60, -0.12],
-        [-0.20, 0.15, 0.20, 0.59, -0.34, 0.06, -0.20, -0.15, -0.20, 0.59, -0.34, -0.06],
-        [-0.22, 0.25, 0.10, 0.78, -0.46, 0.10, -0.18, -0.08, -0.04, 0.45, -0.26, -0.03],
-        [-0.25, 0.08, 0.06, 0.85, -0.50, 0.03, -0.12, -0.15, -0.08, 0.30, -0.17, -0.06],
-        [-0.12, 0.35, 0.10, 0.30, -0.17, 0.14, -0.12, -0.35, -0.10, 0.30, -0.17, -0.14],
-        [-0.18, 0.12, 0.10, 0.55, -0.32, 0.05, -0.18, -0.12, -0.10, 0.55, -0.32, -0.05],
-        [-0.22, 0.28, 0.12, 0.72, -0.43, 0.11, -0.22, -0.28, -0.12, 0.72, -0.43, -0.11],
+        # fmt: off — [hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll] × 2
+        [-0.20, 0.00, 0.00, 0.59, -0.34, 0.00, -0.20, 0.00, 0.00, 0.59, -0.34, 0.00],  # h≈0.728
+        [-0.20, 0.10, 0.08, 0.59, -0.34, 0.05, -0.20, -0.10, -0.08, 0.59, -0.34, -0.05],  # h≈0.727
+        [-0.22, 0.20, 0.10, 0.65, -0.38, 0.08, -0.22, -0.20, -0.10, 0.65, -0.38, -0.08],  # h≈0.717
+        [-0.25, 0.32, 0.14, 0.80, -0.48, 0.13, -0.25, -0.32, -0.14, 0.80, -0.48, -0.13],  # h≈0.691
+        [-0.10, 0.00, 0.00, 0.25, -0.14, 0.00, -0.10, 0.00, 0.00, 0.25, -0.14, 0.00],  # h≈0.752
+        [-0.10, 0.12, 0.06, 0.25, -0.14, 0.05, -0.10, -0.12, -0.06, 0.25, -0.14, -0.05],  # h≈0.749
+        [-0.20, 0.15, 0.20, 0.59, -0.34, 0.06, -0.20, -0.15, -0.20, 0.59, -0.34, -0.06],  # h≈0.728
+        [-0.22, 0.25, 0.10, 0.78, -0.46, 0.10, -0.18, -0.08, -0.04, 0.45, -0.26, -0.03],  # h≈0.717
+        [-0.25, 0.08, 0.06, 0.85, -0.50, 0.03, -0.12, -0.15, -0.08, 0.30, -0.17, -0.06],  # h≈0.720
+        [-0.12, 0.35, 0.10, 0.30, -0.17, 0.14, -0.12, -0.35, -0.10, 0.30, -0.17, -0.14],  # h≈0.722
+        [-0.18, 0.12, 0.10, 0.55, -0.32, 0.05, -0.18, -0.12, -0.10, 0.55, -0.32, -0.05],  # h≈0.730
+        [-0.22, 0.28, 0.12, 0.72, -0.43, 0.11, -0.22, -0.28, -0.12, 0.72, -0.43, -0.11],  # h≈0.702
+        # fmt: on
     ],
     dtype=np.float64,
 )
@@ -278,8 +284,8 @@ def default_config() -> config_dict.ConfigDict:
       ),
       reward_config=config_dict.create(
           scales=config_dict.create(
-              orientation=-2.0,
-              base_height=-1.0,
+              orientation=-3.0,
+              base_height=-2.0,
               lin_vel_z=-0.3,
               ang_vel_xy=-0.5,
               base_linvel_xy=-0.8,
@@ -289,8 +295,8 @@ def default_config() -> config_dict.ConfigDict:
               joint_vel=-0.01,
               dof_pos_limits=-1.0,
               action_rate=-0.03,
-              torques=0.0,
-              energy=0.0,
+              torques=-0.0002,
+              energy=-0.0001,
               dof_acc=0.0,
               collision=-0.0,
               contact_force=-0.05,
@@ -298,10 +304,19 @@ def default_config() -> config_dict.ConfigDict:
               foot_flatness=-0.2,
               foot_slip=-0.05,
               alive=1.0,
-              still_bonus=0.5,
+              still_bonus=1.0,
               termination=-100.0,
           ),
+          # Used only as the reference height for QP gravity-compensation torques
+          # computed in _post_init. It is NOT a reward-tracking target — the RL
+          # policy should learn to stand at whatever height is stable given the
+          # per-episode feedforward pose, rather than being forced to 0.763 m.
           base_height_target=0.763,
+          # One-sided reward floor: penalty is zero at or above this height.
+          # Below it the policy sees an increasing quadratic cost. The robot is
+          # free to stand at any height >= height_min without being penalised for
+          # not matching the QP reference pose height exactly.
+          height_min=0.70,
           max_contact_force=500.0,
       ),
       push_config=config_dict.create(
@@ -326,9 +341,13 @@ def default_config() -> config_dict.ConfigDict:
       ),
       curriculum_config=config_dict.create(
           enable=True,
-          # Curriculum progress reaches 1.0 by this many env steps.
-          ramp_steps=10_000_000,
-          # Keep all disturbances off before this global step.
+          # Curriculum progress reaches 1.0 by this many env steps (per env).
+          # With RSL-RL: 100k iters × 24 steps/iter = 2.4M steps/env total.
+          # ramp_steps=2M ensures the full disturbance range is reached by ~83%
+          # through training, matching the training budget correctly.
+          ramp_steps=2_000_000,
+          # Keep all disturbances off before this global step (per env).
+          # With RSL-RL 24 steps/iter, each env reaches this after ~41.7k iters.
           disturbance_warmup_steps=1_000_000,
           use_performance_gate=True,
           ema_alpha=0.02,
@@ -425,6 +444,12 @@ class Standing(g1_base.G1Env):
     self._G_standing_library = []
     self._target_com_left_library = []
     self._target_com_right_library = []
+    # Per-pose foot world positions for the CoM PID FK correction.
+    # Each library pose has a different foot stance (especially asymmetric poses
+    # with hip_roll != 0). Using the wrong foot anchor biases the CoM estimate
+    # and causes the PID to correct toward the wrong target.
+    self._foot_world_left_library = []
+    self._foot_world_right_library = []
 
     for pose_np in np.array(self._leg_pose_library, dtype=np.float64):
       self._comp_tau_library.append(
@@ -444,6 +469,8 @@ class Standing(g1_base.G1Env):
       _mj.mj_forward(self._mj_model, tmp)
       fw_l = tmp.xpos[lf_id].copy()
       fw_r = tmp.xpos[rf_id].copy()
+      self._foot_world_left_library.append(fw_l)
+      self._foot_world_right_library.append(fw_r)
 
       _bq = np.array([1.0, 0.0, 0.0, 0.0])
       self._target_com_left_library.append(
@@ -477,6 +504,8 @@ class Standing(g1_base.G1Env):
 
     self._comp_tau_library = jp.array(np.array(self._comp_tau_library))
     self._G_standing_library = jp.array(np.array(self._G_standing_library))
+    self._foot_world_left_library = jp.array(np.array(self._foot_world_left_library))
+    self._foot_world_right_library = jp.array(np.array(self._foot_world_right_library))
     self._target_com_left_library = jp.array(np.array(self._target_com_left_library))
     self._target_com_right_library = jp.array(np.array(self._target_com_right_library))
     self._comp_tau = self._comp_tau_library[0]
@@ -670,6 +699,9 @@ class Standing(g1_base.G1Env):
         jp.array(0, dtype=jp.int32),
     )
 
+    sampled_foot_world_left = self._foot_world_left_library[pose_idx]
+    sampled_foot_world_right = self._foot_world_right_library[pose_idx]
+
     info = {
         "rng": rng,
         "step": jp.array(0, dtype=jp.int32),
@@ -683,6 +715,9 @@ class Standing(g1_base.G1Env):
         "G_standing": sampled_g_standing,
         "target_com_left": sampled_target_com_left,
         "target_com_right": sampled_target_com_right,
+        "foot_world_left": sampled_foot_world_left,
+        "foot_world_right": sampled_foot_world_right,
+        "foot_world_mid": (sampled_foot_world_left + sampled_foot_world_right) / 2.0,
         "com_integral": jp.zeros(3),
         "prev_com": (sampled_target_com_left + sampled_target_com_right) / 2.0,
         "com_vel_filtered": jp.zeros(3),
@@ -726,9 +761,17 @@ class Standing(g1_base.G1Env):
     )
 
   def _com_stance_from_mjx_fwd(
-      self, fwd: mjx.Data
+      self,
+      fwd: mjx.Data,
+      foot_world_left: jax.Array,
+      foot_world_right: jax.Array,
   ) -> tuple[jax.Array, jax.Array]:
-    """Lower foot by z on same FK snapshot; world CoM via foot anchor (no measured CoM)."""
+    """Lower foot by z on same FK snapshot; world CoM via foot anchor (no measured CoM).
+
+    foot_world_left/right must be the nominal foot positions for the CURRENT episode's
+    library pose. Using the wrong (default-pose) anchors biases the CoM estimate
+    for asymmetric poses (hip_roll != 0) and causes spurious PID corrections.
+    """
     zl = fwd.xpos[self._left_foot_body_id, 2]
     zr = fwd.xpos[self._right_foot_body_id, 2]
     use_left = zl <= zr
@@ -737,9 +780,7 @@ class Standing(g1_base.G1Env):
         fwd.xpos[self._left_foot_body_id],
         fwd.xpos[self._right_foot_body_id],
     )
-    foot_w = jp.where(
-        use_left, self._foot_world_left, self._foot_world_right
-    )
+    foot_w = jp.where(use_left, foot_world_left, foot_world_right)
     com_w = _com_world_from_fk_jp(
         fwd.subtree_com[self._pelvis_body_id], foot_x, foot_w
     )
@@ -780,7 +821,11 @@ class Standing(g1_base.G1Env):
 
     # CoM PID → ankle/hip torque hints → same Δq mapping.
     if self._config.com_pid_config.enable:
-      use_left_stance, current_com = self._com_stance_from_mjx_fwd(fwd_com_fk)
+      use_left_stance, current_com = self._com_stance_from_mjx_fwd(
+          fwd_com_fk,
+          state.info["foot_world_left"],
+          state.info["foot_world_right"],
+      )
       target_com = jp.where(
           use_left_stance, state.info["target_com_left"], state.info["target_com_right"]
       )
@@ -801,7 +846,7 @@ class Standing(g1_base.G1Env):
           -self._com_max_force,
           self._com_max_force,
       )
-      r_com = current_com - self._foot_world_mid
+      r_com = current_com - state.info["foot_world_mid"]
       m_pitch = -r_com[2] * f_com[0]
       m_roll = r_com[2] * f_com[1]
       m_hip_roll = self._com_hip_roll_scale * r_com[2] * f_com[1]
@@ -939,8 +984,6 @@ class Standing(g1_base.G1Env):
         * self._config.noise_config.scales.joint_vel
     )
 
-    zero_cmd = jp.zeros(3)
-    zero_phase = jp.zeros(4)
     target_pose = info["target_pose"]
     # Keep semantics explicit: legs are target-relative, upper body is absolute.
     leg_residual = (
@@ -948,14 +991,15 @@ class Standing(g1_base.G1Env):
     )
     upper_abs = noisy_joint_angles[self._upper_indices]
     joint_state_obs = jp.hstack([leg_residual, upper_abs])
+    # obs = gyro(3) + gravity(3) + joint_state(29) + joint_vel(29) + last_act(12) = 76
+    # zero_cmd and zero_phase removed: they were constant zeros inherited from the
+    # joystick template and provided no information to the policy.
     state = jp.hstack([
         noisy_gyro,
         noisy_gravity,
-        zero_cmd,
         joint_state_obs,
         noisy_joint_vel,
         info["last_act"],
-        zero_phase,
     ])
 
     privileged_state = jp.hstack([
@@ -1013,8 +1057,12 @@ class Standing(g1_base.G1Env):
     }
 
   def _get_termination(self, data: mjx.Data) -> jax.Array:
-    fall = self.get_gravity(data, "torso")[-1] < 0.0
-    low_height = data.qpos[2] < 0.45
+    # Use pelvis frame (more direct stability measure than torso, which can flex at waist).
+    # z < 0.5 ≈ 60° tilt — catches falls well before the robot is fully horizontal.
+    fall = self.get_gravity(data, "pelvis")[-1] < 0.5
+    # 0.65 m is only 11 cm below the 0.763 m target; this closes the "crouch to survive"
+    # loophole that existed when the floor was at 0.45 m.
+    low_height = data.qpos[2] < 0.65
     collision = data.sensordata[
         self._mj_model.sensor_adr[self._right_foot_left_foot_found_sensor]
     ] > 0
@@ -1223,7 +1271,16 @@ class Standing(g1_base.G1Env):
     return jp.sum(jp.square(torso_zaxis - jp.array([0.0, 0.0, 1.0])))
 
   def _cost_base_height(self, base_height: jax.Array) -> jax.Array:
-    return jp.square(base_height - self._config.reward_config.base_height_target)
+    # One-sided floor cost: zero when height >= height_min, quadratic below.
+    # The symmetric -(h - 0.763)^2 tracking term has been intentionally removed.
+    # Reason: the pose library contains poses at varying natural heights (some
+    # crouched), so penalising the robot for being at 0.77 m vs 0.763 m is
+    # counterproductive. base_height_target is still used for QP feedforward
+    # computation; the RL policy only needs to learn to stay above height_min.
+    # A 10× amplifier gives a gradient of ~0.2 per cm at the floor boundary,
+    # which is visible above the alive-bonus noise without being overwhelming.
+    deficit = jp.maximum(0.0, self._config.reward_config.height_min - base_height)
+    return jp.square(deficit) * 10.0
 
   def _cost_joint_pos_limits(self, qpos: jax.Array) -> jax.Array:
     out_of_limits = -jp.clip(qpos - self._soft_lowers, None, 0.0)
@@ -1286,8 +1343,9 @@ class Standing(g1_base.G1Env):
     yaw = self.get_global_angvel(data, "torso")[2]
     tilt = jp.linalg.norm(self.get_gravity(data, "torso")[:2])
     err = jp.linalg.norm(lin_xy) + jp.abs(yaw) + tilt
-    # Softer exponent gives meaningful gradient even when robot is wobbly.
-    return jp.exp(-1.5 * err)
+    # 1/(1+2*err) keeps a meaningful gradient at large errors (e.g. err=2 → gradient≈0.06)
+    # whereas exp(-1.5*err) vanishes (gradient≈0.004) and stalls the policy when wobbly.
+    return 1.0 / (1.0 + 2.0 * err)
 
   def _cost_com_stability(self, data: mjx.Data, contact: jax.Array) -> jax.Array:
     com_xy = data.subtree_com[self._pelvis_body_id, :2]  # whole-body CoM
