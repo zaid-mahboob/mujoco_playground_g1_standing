@@ -960,7 +960,14 @@ class Standing(g1_base.G1Env):
         * self._config.noise_config.scales.gyro
     )
 
-    gravity = data.site_xmat[self._pelvis_imu_site_id].T @ jp.array([0, 0, -1])
+    quat = data.qpos[3:7]
+    quat = quat / (jp.linalg.norm(quat) + 1e-8)
+    qw, qx, qy, qz = quat
+    gravity = jp.array([
+        2.0 * (-qz * qx + qw * qy),
+        -2.0 * (qz * qy + qw * qx),
+        1.0 - 2.0 * (qw * qw + qz * qz),
+    ])
     info["rng"], noise_rng = jax.random.split(info["rng"])
     noisy_gravity = gravity + (
         (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1)
