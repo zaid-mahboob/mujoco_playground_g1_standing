@@ -253,6 +253,10 @@ LEG_POSE_LIBRARY = np.array(
     dtype=np.float64,
 )
 
+# Set to a positive integer to limit how many poses from the library are used
+# for training (will select the first N poses). Use -1 to keep all poses.
+LEG_POSE_LIBRARY_USE_COUNT = -1
+
 
 def default_config() -> config_dict.ConfigDict:
   return config_dict.create(
