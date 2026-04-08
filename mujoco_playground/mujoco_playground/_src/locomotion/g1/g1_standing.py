@@ -331,7 +331,7 @@ def default_config() -> config_dict.ConfigDict:
           magnitude_range=[0.02, 0.12],
       ),
       upper_body_pose_disturbance=config_dict.create(
-          enable=True,
+          enable=False,
           # Uniform magnitude then ± sign; result is clamped per joint so
           # upper_body_target[j] + offset stays within mj jnt_range (hard limits).
           # Example (nominal 0, g1_mjx_feetonly.xml): waist_yaw ∈ [-2.618, 2.618] rad
