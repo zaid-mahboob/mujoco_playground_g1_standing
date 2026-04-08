@@ -430,7 +430,12 @@ class Standing(g1_base.G1Env):
     gamma = float(self._config.qp_gamma)
 
     if self._config.standing_pose_randomization.enable:
-      self._leg_pose_library = jp.array(LEG_POSE_LIBRARY)
+            # Optionally limit number of library poses used for training.
+            if LEG_POSE_LIBRARY_USE_COUNT is not None and LEG_POSE_LIBRARY_USE_COUNT > 0:
+                selected = LEG_POSE_LIBRARY[:LEG_POSE_LIBRARY_USE_COUNT]
+            else:
+                selected = LEG_POSE_LIBRARY
+            self._leg_pose_library = jp.array(selected)
     else:
       self._leg_pose_library = jp.array(default_leg_pose_np[jp.newaxis, :])
 
