@@ -123,7 +123,14 @@
     <mesh name="left_wrist_pitch_link"
       file="../../../../../mujoco_menagerie/unitree_g1/assets/left_wrist_pitch_link.STL"/>
     <mesh name="left_wrist_yaw_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_wrist_yaw_link.STL"/>
-    <mesh name="left_rubber_hand" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_rubber_hand.STL"/>
+    <mesh name="left_hand_palm_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_palm_link.STL"/>
+    <mesh name="left_hand_thumb_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_thumb_0_link.STL"/>
+    <mesh name="left_hand_thumb_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_thumb_1_link.STL"/>
+    <mesh name="left_hand_thumb_2_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_thumb_2_link.STL"/>
+    <mesh name="left_hand_middle_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_middle_0_link.STL"/>
+    <mesh name="left_hand_middle_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_middle_1_link.STL"/>
+    <mesh name="left_hand_index_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_index_0_link.STL"/>
+    <mesh name="left_hand_index_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/left_hand_index_1_link.STL"/>
     <mesh name="right_shoulder_pitch_link"
       file="../../../../../mujoco_menagerie/unitree_g1/assets/right_shoulder_pitch_link.STL"/>
     <mesh name="right_shoulder_roll_link"
@@ -136,7 +143,14 @@
     <mesh name="right_wrist_pitch_link"
       file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_pitch_link.STL"/>
     <mesh name="right_wrist_yaw_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_wrist_yaw_link.STL"/>
-    <mesh name="right_rubber_hand" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_rubber_hand.STL"/>
+    <mesh name="right_hand_palm_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_palm_link.STL"/>
+    <mesh name="right_hand_thumb_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_thumb_0_link.STL"/>
+    <mesh name="right_hand_thumb_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_thumb_1_link.STL"/>
+    <mesh name="right_hand_thumb_2_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_thumb_2_link.STL"/>
+    <mesh name="right_hand_middle_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_middle_0_link.STL"/>
+    <mesh name="right_hand_middle_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_middle_1_link.STL"/>
+    <mesh name="right_hand_index_0_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_index_0_link.STL"/>
+    <mesh name="right_hand_index_1_link" file="../../../../../mujoco_menagerie/unitree_g1/assets/right_hand_index_1_link.STL"/>
   </asset>
 
   <worldbody>
@@ -331,15 +345,55 @@
                         <geom class="visual" mesh="left_wrist_pitch_link"/>
                         <geom class="visual" mesh="left_wrist_pitch_link"/>
                         <body name="left_wrist_yaw_link" pos="0.046 0 0">
-                          <inertial pos="0.0708244 0.000191745 0.00161742" quat="0.510571 0.526295 0.468078 0.493188"
-                            mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
+                          <inertial pos="0.0885506 0.00212216 -0.000374562" quat="0.487149 0.493844 0.513241 0.505358"
+                            mass="0.457415" diaginertia="0.00105989 0.000895419 0.000323842"/>
                           <joint name="left_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
                           <geom class="visual" mesh="left_wrist_yaw_link"/>
-                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_rubber_hand"/>
+                          <geom pos="0.0415 0.003 0" quat="1 0 0 0" class="visual" mesh="left_hand_palm_link"/>
                           <site name="left_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="left_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
+                          <body name="left_hand_thumb_0_link" pos="0.067 0.003 0">
+                            <inertial pos="-0.000884246 -0.00863407 0.000944293"
+                              quat="0.462991 0.643965 -0.460173 0.398986" mass="0.0862366"
+                              diaginertia="1.6546e-05 1.60058e-05 1.43741e-05"/>
+                            <geom class="visual" mesh="left_hand_thumb_0_link"/>
+                            <body name="left_hand_thumb_1_link" pos="-0.0025 -0.0193 0">
+                              <inertial pos="-0.000827888 -0.0354744 -0.0003809"
+                                quat="0.685598 0.705471 -0.15207 0.0956069" mass="0.0588507"
+                                diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                              <geom class="visual" mesh="left_hand_thumb_1_link"/>
+                              <body name="left_hand_thumb_2_link" pos="0 -0.0458 0">
+                                <inertial pos="-0.00171735 -0.0262819 0.000107789"
+                                  quat="0.703174 0.710977 -0.00017564 -0.00766553" mass="0.0203063"
+                                  diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                                <geom class="visual" mesh="left_hand_thumb_2_link"/>
+                              </body>
+                            </body>
+                          </body>
+                          <body name="left_hand_middle_0_link" pos="0.1192 0.0046 -0.0285">
+                            <inertial pos="0.0354744 0.000827888 0.0003809" quat="0.391313 0.552395 0.417187 0.606373"
+                              mass="0.0588507" diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                            <geom class="visual" mesh="left_hand_middle_0_link"/>
+                            <body name="left_hand_middle_1_link" pos="0.0458 0 0">
+                              <inertial pos="0.0262819 0.00171735 -0.000107789"
+                                quat="0.502612 0.491799 0.502639 0.502861" mass="0.0203063"
+                                diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                              <geom class="visual" mesh="left_hand_middle_1_link"/>
+                            </body>
+                          </body>
+                          <body name="left_hand_index_0_link" pos="0.1192 0.0046 0.0285">
+                            <inertial pos="0.0354744 0.000827888 0.0003809" quat="0.391313 0.552395 0.417187 0.606373"
+                              mass="0.0588507" diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                            <geom class="visual" mesh="left_hand_index_0_link"/>
+                            <body name="left_hand_index_1_link" pos="0.0458 0 0">
+                              <inertial pos="0.0262819 0.00171735 -0.000107789"
+                                quat="0.502612 0.491799 0.502639 0.502861" mass="0.0203063"
+                                diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                              <geom class="visual" mesh="left_hand_index_1_link"/>
+                            </body>
+                          </body>
                         </body>
                       </body>
                     </body>
@@ -385,15 +439,55 @@
                         <geom class="visual" mesh="right_wrist_pitch_link"/>
                         <geom class="visual" mesh="right_wrist_pitch_link"/>
                         <body name="right_wrist_yaw_link" pos="0.046 0 0">
-                          <inertial pos="0.0708244 -0.000191745 0.00161742" quat="0.493188 0.468078 0.526295 0.510571"
-                            mass="0.254576" diaginertia="0.000646113 0.000559993 0.000147566"/>
+                          <inertial pos="0.0885506 -0.00212216 -0.000374562" quat="0.505358 0.513241 0.493844 0.487149"
+                            mass="0.457415" diaginertia="0.00105989 0.000895419 0.000323842"/>
                           <joint name="right_wrist_yaw_joint" class="wrist_yaw"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
                           <geom class="visual" mesh="right_wrist_yaw_link"/>
-                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_rubber_hand"/>
+                          <geom pos="0.0415 -0.003 0" quat="1 0 0 0" class="visual" mesh="right_hand_palm_link"/>
                           <site name="right_palm" pos="0.08 0 0" size="0.01"/>
                           <geom name="right_hand_collision" class="collision" type="capsule" size="0.05"
                             fromto="0.05 0 0 0.1 0 0" rgba=".2 .6 .2 .2"/>
+                          <body name="right_hand_thumb_0_link" pos="0.067 -0.003 0">
+                            <inertial pos="-0.000884246 0.00863407 0.000944293"
+                              quat="0.643965 0.462991 -0.398986 0.460173" mass="0.0862366"
+                              diaginertia="1.6546e-05 1.60058e-05 1.43741e-05"/>
+                            <geom class="visual" mesh="right_hand_thumb_0_link"/>
+                            <body name="right_hand_thumb_1_link" pos="-0.0025 0.0193 0">
+                              <inertial pos="-0.000827888 0.0354744 -0.0003809"
+                                quat="0.705471 0.685598 -0.0956069 0.15207" mass="0.0588507"
+                                diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                              <geom class="visual" mesh="right_hand_thumb_1_link"/>
+                              <body name="right_hand_thumb_2_link" pos="0 0.0458 0">
+                                <inertial pos="-0.00171735 0.0262819 0.000107789"
+                                  quat="0.710977 0.703174 0.00766553 0.00017564" mass="0.0203063"
+                                  diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                                <geom class="visual" mesh="right_hand_thumb_2_link"/>
+                              </body>
+                            </body>
+                          </body>
+                          <body name="right_hand_middle_0_link" pos="0.1192 -0.0046 -0.0285">
+                            <inertial pos="0.0354744 -0.000827888 0.0003809" quat="0.606373 0.417187 0.552395 0.391313"
+                              mass="0.0588507" diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                            <geom class="visual" mesh="right_hand_middle_0_link"/>
+                            <body name="right_hand_middle_1_link" pos="0.0458 0 0">
+                              <inertial pos="0.0262819 -0.00171735 -0.000107789"
+                                quat="0.502861 0.502639 0.491799 0.502612" mass="0.0203063"
+                                diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                              <geom class="visual" mesh="right_hand_middle_1_link"/>
+                            </body>
+                          </body>
+                          <body name="right_hand_index_0_link" pos="0.1192 -0.0046 0.0285">
+                            <inertial pos="0.0354744 -0.000827888 0.0003809" quat="0.606373 0.417187 0.552395 0.391313"
+                              mass="0.0588507" diaginertia="1.28514e-05 1.22902e-05 5.9666e-06"/>
+                            <geom class="visual" mesh="right_hand_index_0_link"/>
+                            <body name="right_hand_index_1_link" pos="0.0458 0 0">
+                              <inertial pos="0.0262819 -0.00171735 -0.000107789"
+                                quat="0.502861 0.502639 0.491799 0.502612" mass="0.0203063"
+                                diaginertia="4.61314e-06 3.86645e-06 1.53495e-06"/>
+                              <geom class="visual" mesh="right_hand_index_1_link"/>
+                            </body>
+                          </body>
                         </body>
                       </body>
                     </body>
