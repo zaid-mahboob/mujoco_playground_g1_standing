@@ -19,6 +19,7 @@ from typing import Any, Dict, Optional, Union
 import jax
 import jax.numpy as jp
 from ml_collections import config_dict
+import mujoco
 from mujoco import mjx
 from mujoco.mjx._src import math
 import numpy as np
@@ -26,6 +27,29 @@ import numpy as np
 from mujoco_playground._src import mjx_env
 from mujoco_playground._src.locomotion.g1 import base as g1_base
 from mujoco_playground._src.locomotion.g1 import g1_constants as consts
+
+
+# Library of standing poses: each row is [hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll] × 2 (L then R).
+# Use num_poses in the config to select how many poses (from index 0 upward) are sampled during reset.
+LEG_POSE_LIBRARY = np.array(
+    [
+        # fmt: off
+        [-0.20,  0.00,  0.00, 0.59, -0.34,  0.00, -0.20,  0.00,  0.00, 0.59, -0.34,  0.00],  # h≈0.728
+        [-0.20,  0.10,  0.08, 0.59, -0.34,  0.05, -0.20, -0.10, -0.08, 0.59, -0.34, -0.05],  # h≈0.727
+        [-0.22,  0.20,  0.10, 0.65, -0.38,  0.08, -0.22, -0.20, -0.10, 0.65, -0.38, -0.08],  # h≈0.717
+        [-0.25,  0.32,  0.14, 0.80, -0.48,  0.13, -0.25, -0.32, -0.14, 0.80, -0.48, -0.13],  # h≈0.691
+        [-0.10,  0.00,  0.00, 0.25, -0.14,  0.00, -0.10,  0.00,  0.00, 0.25, -0.14,  0.00],  # h≈0.752
+        [-0.10,  0.12,  0.06, 0.25, -0.14,  0.05, -0.10, -0.12, -0.06, 0.25, -0.14, -0.05],  # h≈0.749
+        [-0.20,  0.15,  0.20, 0.59, -0.34,  0.06, -0.20, -0.15, -0.20, 0.59, -0.34, -0.06],  # h≈0.728
+        [-0.22,  0.25,  0.10, 0.78, -0.46,  0.10, -0.18, -0.08, -0.04, 0.45, -0.26, -0.03],  # h≈0.717
+        [-0.25,  0.08,  0.06, 0.85, -0.50,  0.03, -0.12, -0.15, -0.08, 0.30, -0.17, -0.06],  # h≈0.720
+        [-0.12,  0.35,  0.10, 0.30, -0.17,  0.14, -0.12, -0.35, -0.10, 0.30, -0.17, -0.14],  # h≈0.722
+        [-0.18,  0.12,  0.10, 0.55, -0.32,  0.05, -0.18, -0.12, -0.10, 0.55, -0.32, -0.05],  # h≈0.730
+        [-0.22,  0.28,  0.12, 0.72, -0.43,  0.11, -0.22, -0.28, -0.12, 0.72, -0.43, -0.11],  # h≈0.702
+        # fmt: on
+    ],
+    dtype=np.float64,
+)
 
 
 def default_config() -> config_dict.ConfigDict:
@@ -37,11 +61,8 @@ def default_config() -> config_dict.ConfigDict:
       action_scale=0.35,
       restricted_joint_range=False,
       soft_joint_pos_limit_factor=0.95,
-      # left_leg(6) + right_leg(6) — [hip_pitch, hip_roll, hip_yaw, knee, ankle_pitch, ankle_roll]
-      leg_pose=[
-          -0.2, 0.0, 0.0, 0.59, -0.34, 0.0,   # left leg
-          -0.2, 0.0, 0.0, 0.59, -0.34, 0.0,   # right leg
-      ],
+      # Number of poses to sample from LEG_POSE_LIBRARY (uses poses [0 .. num_poses-1]).
+      num_poses=1,
       # Pelvis orientation [w, x, y, z] — identity = upright (0° roll/pitch/yaw).
       base_quat=[1.0, 0.0, 0.0, 0.0],
       upper_body_target=[0.0] * 17,  # waist(3) + arms(14)
@@ -64,19 +85,21 @@ def default_config() -> config_dict.ConfigDict:
               base_linvel_xy=-0.8,
               base_angvel_yaw=-0.1,
               com_stability=-0.8,
-              pose=-0.3,
+              pose=-0.5,
               joint_vel=-0.01,
               dof_pos_limits=-1.0,
               action_rate=-0.03,
               torques=0.0,
               energy=0.0,
               dof_acc=0.0,
-              collision=-0.5,
+              collision=-2.0,
               contact_force=-0.01,
               foot_contact_symmetry=-0.2,
               foot_flatness=-0.2,
+              foot_distance=-8.0,
+              foot_slip=-0.5,
               alive=1.0,
-              still_bonus=0.5,
+              still_bonus=1.0,
               termination=-100.0,
           ),
           base_height_target=0.763,
@@ -137,7 +160,9 @@ class Standing(g1_base.G1Env):
     self._init_q = jp.array(self._mj_model.keyframe("knees_bent").qpos)
     self._default_pose = jp.array(self._mj_model.keyframe("knees_bent").qpos[7:])
 
-    self._leg_pose = jp.array(self._config.leg_pose)
+    n = int(self._config.num_poses)
+    assert 1 <= n <= len(LEG_POSE_LIBRARY), f"num_poses must be in [1, {len(LEG_POSE_LIBRARY)}]"
+    self._leg_pose_library = jp.array(LEG_POSE_LIBRARY[:n])  # (n, 12)
     self._base_quat = jp.array(self._config.base_quat)
     self._upper_target = jp.array(self._config.upper_body_target)
 
@@ -191,6 +216,24 @@ class Standing(g1_base.G1Env):
         self._mj_model.sensor("right_foot_upvector").id
     ]
 
+    # Body IDs for the feet — used to read cvel for slip penalty.
+    self._feet_body_id = np.array(
+        [self._mj_model.site_bodyid[sid] for sid in self._feet_site_id]
+    )
+
+    # Per-pose target foot distance (XY plane) computed via CPU forward pass.
+    init_qpos = np.array(self._mj_model.keyframe("knees_bent").qpos)
+    foot_distances = []
+    for pose in LEG_POSE_LIBRARY[:n]:
+      d = mujoco.MjData(self._mj_model)
+      d.qpos[:] = init_qpos
+      d.qpos[7:19] = pose
+      mujoco.mj_forward(self._mj_model, d)
+      l_xy = d.site_xpos[self._feet_site_id[0], :2]
+      r_xy = d.site_xpos[self._feet_site_id[1], :2]
+      foot_distances.append(float(np.linalg.norm(l_xy - r_xy)))
+    self._foot_target_distances = jp.array(foot_distances)  # (n,)
+
   @property
   def action_size(self) -> int:
     """Policy controls legs only (12 joints)."""
@@ -219,8 +262,12 @@ class Standing(g1_base.G1Env):
     )
     qpos = qpos.at[2].set(qpos[2] + height_perturb[0])
 
+    rng, key = jax.random.split(rng)
+    pose_idx = jax.random.randint(key, (), 0, len(self._leg_pose_library))
+    leg_pose = self._leg_pose_library[pose_idx]
+
     target_pose = self._default_pose
-    target_pose = target_pose.at[self._leg_indices].set(self._leg_pose)
+    target_pose = target_pose.at[self._leg_indices].set(leg_pose)
     target_pose = target_pose.at[self._upper_indices].set(self._upper_target)
 
     rng, key = jax.random.split(rng)
@@ -272,6 +319,7 @@ class Standing(g1_base.G1Env):
         "disturb_joint": jp.array(0, dtype=jp.int32),
         "disturb_value": jp.array(0.0),
         "push_profile_id": jp.array(0, dtype=jp.int32),
+        "pose_idx": pose_idx,
     }
 
     metrics = {
@@ -371,7 +419,14 @@ class Standing(g1_base.G1Env):
         * self._config.noise_config.scales.gyro
     )
 
-    gravity = data.site_xmat[self._pelvis_imu_site_id].T @ jp.array([0, 0, -1])
+    quat = data.qpos[3:7]
+    quat = quat / (jp.linalg.norm(quat) + 1e-8)
+    qw, qx, qy, qz = quat
+    gravity = jp.array([
+        2.0 * (-qz * qx + qw * qy),
+        -2.0 * (qz * qy + qw * qx),
+        1.0 - 2.0 * (qw * qw + qz * qz),
+    ])
     info["rng"], noise_rng = jax.random.split(info["rng"])
     noisy_gravity = gravity + (
         (2 * jax.random.uniform(noise_rng, shape=gravity.shape) - 1)
@@ -462,6 +517,8 @@ class Standing(g1_base.G1Env):
         "contact_force": self._cost_contact_force(data),
         "foot_contact_symmetry": self._cost_foot_contact_symmetry(data, contact),
         "foot_flatness": self._cost_foot_flatness(data),
+        "foot_distance": self._cost_foot_distance(data, info),
+        "foot_slip": self._cost_foot_slip(data, contact),
         "alive": jp.array(1.0),
         "still_bonus": self._reward_still_bonus(data),
         "termination": done,
@@ -685,6 +742,23 @@ class Standing(g1_base.G1Env):
     ]
     target = jp.array([0.0, 0.0, 1.0])
     return jp.sum(jp.square(l_up - target)) + jp.sum(jp.square(r_up - target))
+
+  def _cost_foot_distance(self, data: mjx.Data, info: dict[str, Any]) -> jax.Array:
+    """Penalise deviation from the per-pose target XY foot separation."""
+    l_xy = data.site_xpos[self._feet_site_id[0], :2]
+    r_xy = data.site_xpos[self._feet_site_id[1], :2]
+    dist = jp.linalg.norm(l_xy - r_xy)
+    target = self._foot_target_distances[info["pose_idx"]]
+    return jp.square(dist - target)
+
+  def _cost_foot_slip(self, data: mjx.Data, contact: jax.Array) -> jax.Array:
+    """Penalise XY foot velocity when the foot is in contact with the ground."""
+    # data.cvel shape: (nbody, 6) — [angvel(3), linvel(3)] in world frame.
+    l_linvel_xy = data.cvel[self._feet_body_id[0], 3:5]
+    r_linvel_xy = data.cvel[self._feet_body_id[1], 3:5]
+    l_slip = jp.sum(jp.square(l_linvel_xy)) * contact[0]
+    r_slip = jp.sum(jp.square(r_linvel_xy)) * contact[1]
+    return l_slip + r_slip
 
   def _reward_still_bonus(self, data: mjx.Data) -> jax.Array:
     lin_xy = self.get_global_linvel(data, "pelvis")[:2]
