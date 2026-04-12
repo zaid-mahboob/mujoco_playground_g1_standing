@@ -186,7 +186,7 @@ def rsl_rl_config(
       seed=1,
       runner_class_name="OnPolicyRunner",
       policy=config_dict.create(
-          init_noise_std=1.0,
+          init_noise_std=0.3,
           actor_hidden_dims=[512, 256, 128],
           critic_hidden_dims=[512, 256, 128],
           # can be elu, relu, selu, crelu, lrelu, tanh, sigmoid
@@ -198,13 +198,13 @@ def rsl_rl_config(
           value_loss_coef=1.0,
           use_clipped_value_loss=True,
           clip_param=0.2,
-          entropy_coef=0.001,
+          entropy_coef=0.003,
           num_learning_epochs=5,
           # mini batch size = num_envs*nsteps / nminibatches
           num_mini_batches=4,
           learning_rate=3.0e-4,  # 5.e-4
           schedule="fixed",  # could be adaptive, fixed
-          gamma=0.99,
+          gamma=0.995,
           lam=0.95,
           desired_kl=0.01,
           max_grad_norm=1.0,

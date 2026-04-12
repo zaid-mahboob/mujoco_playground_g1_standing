@@ -62,7 +62,7 @@ def default_config() -> config_dict.ConfigDict:
       restricted_joint_range=False,
       soft_joint_pos_limit_factor=0.95,
       # Number of poses to sample from LEG_POSE_LIBRARY (uses poses [0 .. num_poses-1]).
-      num_poses=1,
+      num_poses=10,
       # Pelvis orientation [w, x, y, z] — identity = upright (0° roll/pitch/yaw).
       base_quat=[1.0, 0.0, 0.0, 0.0],
       upper_body_target=[0.0] * 17,  # waist(3) + arms(14)
@@ -96,7 +96,7 @@ def default_config() -> config_dict.ConfigDict:
               contact_force=-0.01,
               foot_contact_symmetry=-0.2,
               foot_flatness=-0.2,
-              foot_distance=-8.0,
+              foot_distance=-15.0,
               foot_slip=-0.5,
               alive=1.0,
               still_bonus=1.0,
