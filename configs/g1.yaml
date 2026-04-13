@@ -1,18 +1,78 @@
 # G1 standing deploy — paths relative to repo root.
-onnx_policy_path: model/g1_standing_policy_v2.onnx
+onnx_policy_path: model/g1_standing_policy_v3.onnx
 scene_xml_path: resources/g1/scene_29dof.xml
 
 simulation_duration: 60.0
 simulation_dt: 0.002
 control_decimation: 10
 
-# Leg KP (12 values). Defaults to exact training values; override here if needed.
-# kps: [75, 75, 75, 75, 20, 2, 75, 75, 75, 75, 20, 2]
+# Full 29-joint KP gains (matches training XML actuator_gainprm).
+# Order: L hip(p/r/y), knee, ankle(p/r), R hip(p/r/y), knee, ankle(p/r),
+#        waist(y/r/p), L shoulder(p/r/y), elbow, wrist(r/p/y),
+#        R shoulder(p/r/y), elbow, wrist(r/p/y)
+kps: [75, 75, 75, 75, 20, 2, 75, 75, 75, 75, 20, 2,
+      75, 75, 75,
+      75, 75, 75, 75, 2, 2, 2,
+      75, 75, 75, 75, 2, 2, 2]
 
-# g1_standing.default_config nominal poses.
+# Per-joint damping (matches training XML dof_damping[6:35]).
+dof_damping: [2.0, 2.0, 2.0, 2.0, 1.0, 0.2,
+              2.0, 2.0, 2.0, 2.0, 1.0, 0.2,
+              2.0, 2.0, 2.0,
+              2.0, 2.0, 2.0, 2.0, 0.2, 0.2, 0.2,
+              2.0, 2.0, 2.0, 2.0, 0.2, 0.2, 0.2]
+
+# Nominal joint targets for reset and feedforward.
 leg_pose: [-0.2, 0.0, 0.0, 0.59, -0.34, 0.0, -0.2, 0.0, 0.0, 0.59, -0.34, 0.0]
 upper_body_target: [0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0, 0.0]
 
 action_scale: 0.35
 base_height: 0.79
-seed: 0
+fall_height: 0.45
+
+# ── Viewer disturbances ────────────────────────────────────────────────────────
+# Press the bound key to apply a force/torque impulse on the given body.
+# force/torque are in the world frame [x, y, z]; x=forward, y=left, z=up.
+# duration is in seconds. label is printed to the console on trigger.
+disturbances:
+  - key: RIGHT      # push robot to its right (−Y world)
+    label: "RIGHT → push right"
+    body: pelvis
+    force: [0, -30, 0]
+    duration: 0.3
+
+  - key: LEFT       # push robot to its left (+Y world)
+    label: "LEFT  → push left"
+    body: pelvis
+    force: [0, 30, 0]
+    duration: 0.3
+
+  - key: UP         # push robot forward (+X world)
+    label: "UP    → push fwd"
+    body: pelvis
+    force: [30, 0, 0]
+    duration: 0.3
+
+  - key: DOWN       # push robot backward (−X world)
+    label: "DOWN  → push back"
+    body: pelvis
+    force: [-30, 0, 0]
+    duration: 0.3
+
+  - key: SPACE      # strong lateral shove on torso
+    label: "SPACE → strong shove"
+    body: torso_link
+    force: [0, 30, 0]
+    duration: 0.2
+
+  - key: Q          # spin torso (yaw torque)
+    label: "Q     → yaw kick"
+    body: pelvis
+    torque: [0, 0, 30]
+    duration: 0.3
+
+  - key: E          # opposite yaw torque
+    label: "E     → yaw kick (opp)"
+    body: pelvis
+    torque: [0, 0, -30]
+    duration: 0.3
