@@ -116,6 +116,12 @@ def default_config() -> config_dict.ConfigDict:
           duration_range=[2, 8],
           magnitude_range=[0.02, 0.12],
       ),
+      # Per-episode: one upper-body joint gets a fixed offset. Magnitude is drawn from
+      # that joint's own feasible interval [lo, hi] = mj jnt_range − nominal target
+      # (same bounds as _upper_offset_min/max), not a single global radian range.
+      upper_body_pose_disturbance=config_dict.create(
+          enable=True,
+      ),
       curriculum_config=config_dict.create(
           enable=True,
           ramp_steps=10_000_000,
@@ -132,6 +138,8 @@ def default_config() -> config_dict.ConfigDict:
           joint_mag_scale_end=1.0,
           joint_interval_scale_start=2.0,
           joint_interval_scale_end=1.0,
+          upper_mag_scale_start=0.20,
+          upper_mag_scale_end=1.0,
       ),
       support_height_perturb_range=[-0.01, 0.02],
       impl="warp",
@@ -183,6 +191,9 @@ class Standing(g1_base.G1Env):
     r = self._uppers - self._lowers
     self._soft_lowers = c - 0.5 * r * self._config.soft_joint_pos_limit_factor
     self._soft_uppers = c + 0.5 * r * self._config.soft_joint_pos_limit_factor
+    # Feasible upper-body offset: nominal + offset ∈ [lower, upper] (per joint index).
+    self._upper_offset_min = self._lowers[self._upper_indices] - self._upper_target
+    self._upper_offset_max = self._uppers[self._upper_indices] - self._upper_target
 
     self._pelvis_imu_site_id = self._mj_model.site("imu_in_pelvis").id
     self._torso_body_id = self._mj_model.body(consts.ROOT_BODY).id
@@ -320,6 +331,8 @@ class Standing(g1_base.G1Env):
         "disturb_value": jp.array(0.0),
         "push_profile_id": jp.array(0, dtype=jp.int32),
         "pose_idx": pose_idx,
+        "upper_episode_joint": jp.array(0, dtype=jp.int32),
+        "upper_episode_offset": jp.array(0.0),
     }
 
     metrics = {
@@ -334,7 +347,7 @@ class Standing(g1_base.G1Env):
 
   def step(self, state: mjx_env.State, action: jax.Array) -> mjx_env.State:
     rng = state.info["rng"]
-    rng, push_rng, disturb_rng = jax.random.split(rng, 3)
+    rng, push_rng, disturb_rng, upper_resample_rng = jax.random.split(rng, 4)
 
     data = state.data
     push = self._sample_push(push_rng, state.info)
@@ -350,6 +363,9 @@ class Standing(g1_base.G1Env):
 
     motor_targets = self._apply_joint_disturbance(
         motor_targets, disturb_rng, state.info
+    )
+    motor_targets = self._apply_upper_body_episode_offset(
+        motor_targets, state.info
     )
     motor_targets = jp.clip(motor_targets, self._lowers, self._uppers)
 
@@ -397,6 +413,21 @@ class Standing(g1_base.G1Env):
     state.info["episode_step"] = jp.where(done, 0, state.info["episode_step"])
     state.info["push_step"] = jp.where(done, 0, state.info["push_step"])
     state.info["disturb_step"] = jp.where(done, 0, state.info["disturb_step"])
+
+    new_uj, new_uo = self._sample_upper_body_episode_offset(
+        upper_resample_rng, state.info
+    )
+    disturb_on = self._disturbances_enabled(state.info)
+    state.info["upper_episode_joint"] = jp.where(
+        done,
+        jp.where(disturb_on, new_uj, jp.array(0, dtype=jp.int32)),
+        state.info["upper_episode_joint"],
+    )
+    state.info["upper_episode_offset"] = jp.where(
+        done,
+        jp.where(disturb_on, new_uo, jp.array(0.0)),
+        state.info["upper_episode_offset"],
+    )
 
     for k, v in rewards.items():
       state.metrics[f"reward/{k}"] = v
@@ -691,6 +722,43 @@ class Standing(g1_base.G1Env):
     index = info["disturb_joint"]
     disturbed = targets.at[index].add(jp.where(active, info["disturb_value"], 0.0))
     return disturbed
+
+  def _sample_upper_body_episode_offset(
+      self, rng: jax.Array, info: dict[str, Any]
+  ) -> tuple[jax.Array, jax.Array]:
+    """Pick one upper joint; offset ~ Uniform(lo, hi) for that joint's feasible span.
+
+    lo/hi come from mj jnt_range minus nominal upper_body_target, so a wide joint
+    (e.g. waist_yaw) can get a large offset; a narrow joint (e.g. ankle-class
+    wrist) gets a small one. Curriculum scales the draw toward 0 early training.
+    """
+    progress = self._curriculum_progress(info)
+    disturb_mag_scale = self._lerp(
+        self._config.curriculum_config.upper_mag_scale_start,
+        self._config.curriculum_config.upper_mag_scale_end,
+        progress,
+    )
+    rng, joint_rng, u_rng = jax.random.split(rng, 3)
+    n_upper = int(self._upper_indices.shape[0])
+    new_joint = jax.random.randint(joint_rng, (), 0, n_upper)
+    lo = self._upper_offset_min[new_joint]
+    hi = self._upper_offset_max[new_joint]
+    u = jax.random.uniform(u_rng, ())
+    raw = lo + u * (hi - lo)
+    offset = raw * disturb_mag_scale
+    clamped = jp.clip(offset, lo, hi)
+    return new_joint, clamped
+
+  def _apply_upper_body_episode_offset(
+      self, targets: jax.Array, info: dict[str, Any]
+  ) -> jax.Array:
+    if not self._config.upper_body_pose_disturbance.enable:
+      return targets
+    disturb_on = self._disturbances_enabled(info)
+    upper_index = self._upper_indices[info["upper_episode_joint"]]
+    return targets.at[upper_index].add(
+        jp.where(disturb_on, info["upper_episode_offset"], 0.0)
+    )
 
   def _cost_orientation(self, torso_zaxis: jax.Array) -> jax.Array:
     return jp.sum(jp.square(torso_zaxis - jp.array([0.0, 0.0, 1.0])))
